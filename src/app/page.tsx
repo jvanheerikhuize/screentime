@@ -8,13 +8,14 @@ import { MediaDetailModal } from '@/components/MediaDetailModal';
 import { VideoPlayerModal } from '@/components/VideoPlayerModal';
 import { DirectStreamModal } from '@/components/DirectStreamModal';
 import { SettingsModal } from '@/components/SettingsModal';
-import { MediaItem, StreamSource } from '@/types';
+import { LiveChannelsGrid } from '@/components/LiveChannelsGrid';
+import { MediaItem, StreamSource, LiveChannel } from '@/types';
 import { FEATURED_HERO, SAMPLE_MEDIA_CATALOG } from '@/lib/metadata/tmdb';
 import { OPEN_SOURCE_STREAMS } from '@/lib/streaming/streamSources';
 import { Sparkles, Magnet, Clapperboard, Tv, Film } from 'lucide-react';
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<'home' | 'movies' | 'tv' | 'magnet' | 'settings'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'movies' | 'tv' | 'live' | 'magnet' | 'settings'>('home');
   const [featured, setFeatured] = useState<MediaItem | null>(FEATURED_HERO);
   const [trending, setTrending] = useState<MediaItem[]>(SAMPLE_MEDIA_CATALOG);
   const [movies, setMovies] = useState<MediaItem[]>(SAMPLE_MEDIA_CATALOG.filter((m) => m.mediaType === 'movie'));
@@ -32,6 +33,7 @@ export default function Home() {
     streamUrl: string;
     magnet?: string;
     isTorrent: boolean;
+    isLive?: boolean;
   } | null>(null);
 
   useEffect(() => {
@@ -47,7 +49,6 @@ export default function Home() {
   }, []);
 
   const handlePlayMedia = (media: MediaItem) => {
-    // Check if we have pre-configured streams for this media
     const sources = OPEN_SOURCE_STREAMS[String(media.id)] || OPEN_SOURCE_STREAMS[String(media.tmdbId)] || [];
     if (sources.length > 0) {
       handlePlaySource(sources[0], media);
@@ -98,6 +99,16 @@ export default function Home() {
     });
   };
 
+  const handlePlayLiveChannel = (channel: LiveChannel) => {
+    setActivePlayer({
+      isOpen: true,
+      title: `${channel.name} (Live)`,
+      streamUrl: channel.streamUrl,
+      isTorrent: false,
+      isLive: channel.isLive,
+    });
+  };
+
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col selection:bg-rose-500 selection:text-white">
       {/* Navigation */}
@@ -133,7 +144,7 @@ export default function Home() {
 
               <MediaCarousel
                 title="Movies & Feature Films"
-                subtitle="Open cinema, Blender Institute originals & 4K VFX"
+                subtitle="Blockbuster cinema, 4K sci-fi & Blender Foundation originals"
                 items={movies}
                 onSelectMedia={(item) => setSelectedMedia(item)}
                 onPlayMedia={handlePlayMedia}
@@ -225,6 +236,10 @@ export default function Home() {
             </div>
           </div>
         )}
+
+        {activeTab === 'live' && (
+          <LiveChannelsGrid onPlayChannel={handlePlayLiveChannel} />
+        )}
       </main>
 
       {/* Media Detail Modal */}
@@ -258,6 +273,7 @@ export default function Home() {
           streamUrl={activePlayer.streamUrl}
           magnet={activePlayer.magnet}
           isTorrent={activePlayer.isTorrent}
+          isLive={activePlayer.isLive}
           onClose={() => setActivePlayer(null)}
         />
       )}

@@ -4,8 +4,9 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   X, Play, Pause, Volume2, VolumeX, Maximize, Minimize,
   RotateCcw, RotateCw, Activity, ArrowDownCircle, Users,
-  Settings2, Sparkles, AlertCircle, RefreshCw, FileVideo
+  Sparkles, AlertCircle, RefreshCw, Radio
 } from 'lucide-react';
+import Hls from 'hls.js';
 import { TorrentStats } from '@/types';
 
 interface VideoPlayerModalProps {
@@ -13,6 +14,7 @@ interface VideoPlayerModalProps {
   streamUrl: string;
   magnet?: string;
   isTorrent?: boolean;
+  isLive?: boolean;
   onClose: () => void;
 }
 
@@ -21,10 +23,12 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
   streamUrl,
   magnet,
   isTorrent = false,
+  isLive = false,
   onClose,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const hlsRef = useRef<Hls | null>(null);
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -56,6 +60,75 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
     }
     return url;
   }, [streamUrl, magnet, isTorrent, selectedFileIndex, useTranscode]);
+
+  // HLS / Direct Media Player Lifecycle
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    setIsLoading(true);
+    setError(null);
+
+    // Destroy previous HLS instance if any
+    if (hlsRef.current) {
+      hlsRef.current.destroy();
+      hlsRef.current = null;
+    }
+
+    const isHlsStream = activeUrl.includes('.m3u8') || isLive;
+
+    if (isHlsStream && Hls.isSupported()) {
+      const hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: true,
+        backBufferLength: 90,
+      });
+      hlsRef.current = hls;
+
+      hls.loadSource(activeUrl);
+      hls.attachMedia(video);
+
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        setIsLoading(false);
+        video.play().then(() => setIsPlaying(true)).catch(() => {});
+      });
+
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (data.fatal) {
+          switch (data.type) {
+            case Hls.ErrorTypes.NETWORK_ERROR:
+              hls.startLoad();
+              break;
+            case Hls.ErrorTypes.MEDIA_ERROR:
+              hls.recoverMediaError();
+              break;
+            default:
+              hls.destroy();
+              setError('Failed to connect to live stream feed.');
+              setIsLoading(false);
+              break;
+          }
+        }
+      });
+    } else if (isHlsStream && video.canPlayType('application/vnd.apple.mpegurl')) {
+      // Native Apple Safari HLS playback
+      video.src = activeUrl;
+      video.addEventListener('loadedmetadata', () => {
+        setIsLoading(false);
+        video.play().then(() => setIsPlaying(true)).catch(() => {});
+      });
+    } else {
+      // Direct MP4 / WebM / Torrent HTTP stream
+      video.src = activeUrl;
+    }
+
+    return () => {
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+    };
+  }, [activeUrl, isLive]);
 
   // Torrent Stats Polling
   useEffect(() => {
@@ -118,7 +191,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
   };
 
   const skipTime = (seconds: number) => {
-    if (videoRef.current) {
+    if (videoRef.current && !isLive) {
       videoRef.current.currentTime = Math.max(0, Math.min(duration, videoRef.current.currentTime + seconds));
     }
   };
@@ -212,7 +285,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [togglePlay, onClose, duration]);
+  }, [togglePlay, onClose, duration, isLive]);
 
   const formatTime = (secs: number) => {
     if (isNaN(secs)) return '00:00';
@@ -242,7 +315,6 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
       {/* Video Element */}
       <video
         ref={videoRef}
-        src={activeUrl}
         className="w-full h-full object-contain cursor-pointer"
         onClick={togglePlay}
         onTimeUpdate={handleTimeUpdate}
@@ -273,7 +345,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
           <div className="w-14 h-14 rounded-full border-4 border-rose-500/20 border-t-rose-500 animate-spin" />
           <p className="text-white text-sm font-semibold tracking-wide flex items-center gap-2">
             <Sparkles className="w-4 h-4 text-rose-400 animate-pulse" />
-            {isTorrent ? 'Buffering torrent swarm...' : 'Loading media stream...'}
+            {isTorrent ? 'Buffering torrent swarm...' : isLive ? 'Connecting to live broadcast stream...' : 'Loading media stream...'}
           </p>
           {isTorrent && torrentStats && (
             <div className="text-xs text-zinc-300 bg-zinc-900/80 px-3 py-1.5 rounded-full border border-zinc-700/60 backdrop-blur-md flex items-center gap-3">
@@ -290,7 +362,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
           <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
           <div className="space-y-2 flex-1">
             <p className="text-sm font-medium">{error}</p>
-            {!useTranscode && (
+            {!useTranscode && !isLive && (
               <button
                 onClick={() => {
                   setUseTranscode(true);
@@ -324,12 +396,17 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
             <h1 className="text-base sm:text-lg font-bold text-white drop-shadow truncate max-w-md sm:max-w-xl">
               {title}
             </h1>
-            {isTorrent && (
+            {isTorrent ? (
               <span className="text-xs text-rose-400 font-semibold flex items-center gap-1.5">
                 <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
                 P2P BitTorrent Stream
               </span>
-            )}
+            ) : isLive ? (
+              <span className="text-xs text-rose-400 font-semibold flex items-center gap-1.5 uppercase tracking-wider">
+                <Radio className="w-3.5 h-3.5 text-rose-500 animate-pulse" />
+                24/7 Live Broadcast
+              </span>
+            ) : null}
           </div>
         </div>
 
@@ -360,25 +437,26 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
           showControls ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
       >
-        {/* Seekbar */}
-        <div className="relative group/seek flex items-center">
-          {/* Buffered track */}
-          {duration > 0 && (
-            <div
-              className="absolute left-0 top-1/2 -translate-y-1/2 h-1.5 bg-zinc-600/60 rounded-full pointer-events-none"
-              style={{ width: `${(bufferedEnd / duration) * 100}%` }}
+        {/* Seekbar (hidden in 24/7 live mode) */}
+        {!isLive && (
+          <div className="relative group/seek flex items-center">
+            {duration > 0 && (
+              <div
+                className="absolute left-0 top-1/2 -translate-y-1/2 h-1.5 bg-zinc-600/60 rounded-full pointer-events-none"
+                style={{ width: `${(bufferedEnd / duration) * 100}%` }}
+              />
+            )}
+            <input
+              type="range"
+              min={0}
+              max={duration || 100}
+              step={0.1}
+              value={currentTime}
+              onChange={handleSeek}
+              className="w-full h-1.5 bg-zinc-800 rounded-full appearance-none cursor-pointer accent-rose-500 hover:h-2 transition-all"
             />
-          )}
-          <input
-            type="range"
-            min={0}
-            max={duration || 100}
-            step={0.1}
-            value={currentTime}
-            onChange={handleSeek}
-            className="w-full h-1.5 bg-zinc-800 rounded-full appearance-none cursor-pointer accent-rose-500 hover:h-2 transition-all"
-          />
-        </div>
+          </div>
+        )}
 
         {/* Action Controls */}
         <div className="flex items-center justify-between gap-4">
@@ -391,21 +469,25 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
               {isPlaying ? <Pause className="w-5 h-5 fill-white" /> : <Play className="w-5 h-5 fill-white ml-0.5" />}
             </button>
 
-            <button
-              onClick={() => skipTime(-10)}
-              className="p-2 rounded-lg text-zinc-300 hover:text-white hover:bg-zinc-800/80 transition-colors"
-              title="Rewind 10s"
-            >
-              <RotateCcw className="w-4 h-4" />
-            </button>
+            {!isLive && (
+              <>
+                <button
+                  onClick={() => skipTime(-10)}
+                  className="p-2 rounded-lg text-zinc-300 hover:text-white hover:bg-zinc-800/80 transition-colors"
+                  title="Rewind 10s"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                </button>
 
-            <button
-              onClick={() => skipTime(10)}
-              className="p-2 rounded-lg text-zinc-300 hover:text-white hover:bg-zinc-800/80 transition-colors"
-              title="Forward 10s"
-            >
-              <RotateCw className="w-4 h-4" />
-            </button>
+                <button
+                  onClick={() => skipTime(10)}
+                  className="p-2 rounded-lg text-zinc-300 hover:text-white hover:bg-zinc-800/80 transition-colors"
+                  title="Forward 10s"
+                >
+                  <RotateCw className="w-4 h-4" />
+                </button>
+              </>
+            )}
 
             {/* Volume */}
             <div className="flex items-center gap-2 group/volume">
@@ -426,10 +508,17 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
               />
             </div>
 
-            {/* Time Stamp */}
-            <span className="text-xs font-mono text-zinc-400 pl-1">
-              {formatTime(currentTime)} / {formatTime(duration)}
-            </span>
+            {/* Time Stamp / Live Indicator */}
+            {isLive ? (
+              <span className="flex items-center gap-1.5 text-xs font-bold text-rose-500 bg-rose-600/20 px-2 py-0.5 rounded-md uppercase tracking-wider">
+                <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+                LIVE
+              </span>
+            ) : (
+              <span className="text-xs font-mono text-zinc-400 pl-1">
+                {formatTime(currentTime)} / {formatTime(duration)}
+              </span>
+            )}
           </div>
 
           {/* Right Controls */}
@@ -452,32 +541,36 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
             )}
 
             {/* Transcode Toggle */}
-            <button
-              onClick={() => setUseTranscode(!useTranscode)}
-              className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all ${
-                useTranscode
-                  ? 'bg-rose-600/30 border-rose-500 text-rose-300'
-                  : 'bg-zinc-900/80 border-zinc-700 text-zinc-400 hover:text-white'
-              }`}
-              title="Transcode video stream via FFmpeg"
-            >
-              {useTranscode ? 'Transcode: ON' : 'Direct Play'}
-            </button>
+            {!isLive && (
+              <button
+                onClick={() => setUseTranscode(!useTranscode)}
+                className={`px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all ${
+                  useTranscode
+                    ? 'bg-rose-600/30 border-rose-500 text-rose-300'
+                    : 'bg-zinc-900/80 border-zinc-700 text-zinc-400 hover:text-white'
+                }`}
+                title="Transcode video stream via FFmpeg"
+              >
+                {useTranscode ? 'Transcode: ON' : 'Direct Play'}
+              </button>
+            )}
 
-            {/* Speed Selector */}
-            <div className="flex items-center bg-zinc-900/80 border border-zinc-800 rounded-lg p-0.5 text-xs text-zinc-300">
-              {[1, 1.25, 1.5].map((speed) => (
-                <button
-                  key={speed}
-                  onClick={() => handleSpeedChange(speed)}
-                  className={`px-2 py-0.5 rounded-md font-medium transition-colors ${
-                    playbackSpeed === speed ? 'bg-zinc-700 text-white font-bold' : 'hover:text-white'
-                  }`}
-                >
-                  {speed}x
-                </button>
-              ))}
-            </div>
+            {/* Speed Selector (non-live) */}
+            {!isLive && (
+              <div className="flex items-center bg-zinc-900/80 border border-zinc-800 rounded-lg p-0.5 text-xs text-zinc-300">
+                {[1, 1.25, 1.5].map((speed) => (
+                  <button
+                    key={speed}
+                    onClick={() => handleSpeedChange(speed)}
+                    className={`px-2 py-0.5 rounded-md font-medium transition-colors ${
+                      playbackSpeed === speed ? 'bg-zinc-700 text-white font-bold' : 'hover:text-white'
+                    }`}
+                  >
+                    {speed}x
+                  </button>
+                ))}
+              </div>
+            )}
 
             {/* Fullscreen Button */}
             <button

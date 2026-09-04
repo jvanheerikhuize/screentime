@@ -1,12 +1,12 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Film, Search, SlidersHorizontal, Magnet, Sparkles, Tv, Clapperboard } from 'lucide-react';
+import { Film, Search, SlidersHorizontal, Magnet, Sparkles, Tv, Clapperboard, Radio } from 'lucide-react';
 import { MediaItem } from '@/types';
 
 interface NavbarProps {
-  activeTab: 'home' | 'movies' | 'tv' | 'magnet' | 'settings';
-  setActiveTab: (tab: 'home' | 'movies' | 'tv' | 'magnet' | 'settings') => void;
+  activeTab: 'home' | 'movies' | 'tv' | 'live' | 'magnet' | 'settings';
+  setActiveTab: (tab: 'home' | 'movies' | 'tv' | 'live' | 'magnet' | 'settings') => void;
   onSelectMedia: (media: MediaItem) => void;
   onOpenMagnetModal: () => void;
   onOpenSettingsModal: () => void;
@@ -100,6 +100,18 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               <Tv className="w-4 h-4" />
               Series
+            </button>
+            <button
+              onClick={() => setActiveTab('live')}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1.5 transition-all ${
+                activeTab === 'live'
+                  ? 'bg-zinc-800 text-white shadow-sm'
+                  : 'text-zinc-400 hover:text-white hover:bg-zinc-900/60'
+              }`}
+            >
+              <Radio className="w-4 h-4 text-rose-500" />
+              Live TV
+              <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse ml-0.5" />
             </button>
           </nav>
         </div>

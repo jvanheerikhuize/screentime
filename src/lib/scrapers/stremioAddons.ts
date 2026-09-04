@@ -2,6 +2,8 @@ import { StreamSource } from '@/types';
 
 export const DEFAULT_ADDON_URLS = [
   'https://torrentio.strem.fun',
+  'https://mediafusion.elfhosted.com',
+  'https://knightcrawler.elfhosted.com',
 ];
 
 const DEFAULT_TRACKERS = [
@@ -30,13 +32,11 @@ function parseQuality(text: string): '4K' | '1080p' | '720p' | '480p' | 'Auto' {
 }
 
 function parseSeeds(text: string): number | undefined {
-  // Matches "👤 142" or "S: 142" or "Seeds: 142"
   const match = text.match(/(?:👤|seeds?[:\s]|s[:\s])\s*(\d+)/i);
   return match ? parseInt(match[1], 10) : undefined;
 }
 
 function parseSize(text: string): string | undefined {
-  // Matches "💾 2.4 GB" or "2.4 GB"
   const match = text.match(/(?:💾\s*)?(\d+(?:\.\d+)?\s*(?:GB|MB|TB|GiB|MiB))/i);
   return match ? match[1] : undefined;
 }
@@ -77,6 +77,7 @@ export class StremioAddonScraper {
     const typePath = mediaType === 'tv' ? 'series' : 'movie';
 
     const results: StreamSource[] = [];
+    const seenHashes = new Set<string>();
 
     await Promise.all(
       this.addonUrls.map(async (baseUrl) => {
@@ -85,7 +86,7 @@ export class StremioAddonScraper {
 
         try {
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s timeout
+          const timeoutId = setTimeout(() => controller.abort(), 7000);
 
           const res = await fetch(targetUrl, {
             signal: controller.signal,
@@ -95,10 +96,7 @@ export class StremioAddonScraper {
           });
           clearTimeout(timeoutId);
 
-          if (!res.ok) {
-            console.warn(`[StremioScraper] Addon returned status ${res.status} for ${targetUrl}`);
-            return;
-          }
+          if (!res.ok) return;
 
           const data = await res.json();
           if (!data.streams || !Array.isArray(data.streams)) return;
@@ -108,12 +106,17 @@ export class StremioAddonScraper {
             const rawTitle = stream.title || stream.name || title;
             const fullDesc = `${stream.name || ''}\n${rawTitle}`;
 
+            if (stream.infoHash && seenHashes.has(stream.infoHash.toLowerCase())) {
+              continue; // deduplicate swarms across multiple addons
+            }
+            if (stream.infoHash) {
+              seenHashes.add(stream.infoHash.toLowerCase());
+            }
+
             const quality = parseQuality(fullDesc);
             const seeds = parseSeeds(fullDesc);
             const size = parseSize(fullDesc);
             const codec = parseCodec(fullDesc);
-
-            // Clean title for display
             const firstLine = rawTitle.split('\n')[0].trim();
 
             let magnet = '';
@@ -139,12 +142,12 @@ export class StremioAddonScraper {
             });
           }
         } catch (err: any) {
-          console.warn(`[StremioScraper] Error fetching from ${targetUrl}:`, err.message);
+          // silently continue
         }
       })
     );
 
-    // Sort streams: 4K -> 1080p -> 720p, and then by seed count descending
+    // Sort: 4K -> 1080p -> 720p, then highest seed count
     const qualityWeight = { '4K': 4, '1080p': 3, '720p': 2, '480p': 1, Auto: 0 };
     return results.sort((a, b) => {
       const qA = qualityWeight[a.quality] || 0;

@@ -52,7 +52,19 @@ export interface StreamSource {
   seeds?: number;
   peers?: number;
   provider: string;
-  type: 'torrent' | 'direct' | 'debrid';
+  type: 'torrent' | 'direct' | 'debrid' | 'live';
+}
+
+export interface LiveChannel {
+  id: string;
+  name: string;
+  category: 'News' | 'Space & Science' | 'Sports' | 'Documentary' | 'Music & Culture' | 'Entertainment' | 'General';
+  country: string;
+  language: string;
+  logo: string;
+  streamUrl: string;
+  description: string;
+  isLive: boolean;
 }
 
 export interface TorrentStats {
