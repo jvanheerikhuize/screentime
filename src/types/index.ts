@@ -103,4 +103,11 @@ export interface UserSettings {
   maxPeers: number;
   hardwareAcceleration: boolean;
   addonUrls: string[];
+  // Self-Hosted Index Aggregators (Prowlarr / Jackett)
+  prowlarrEnabled?: boolean;
+  prowlarrUrl?: string;
+  prowlarrApiKey?: string;
+  jackettEnabled?: boolean;
+  jackettUrl?: string;
+  jackettApiKey?: string;
 }

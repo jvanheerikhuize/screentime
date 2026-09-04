@@ -37,6 +37,21 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
       url += `&season=${seasonNum}&episode=${episodeNum}`;
     }
 
+    try {
+      const saved = localStorage.getItem('screentime_settings');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.prowlarrEnabled && parsed.prowlarrUrl && parsed.prowlarrApiKey) {
+          url += `&prowlarrUrl=${encodeURIComponent(parsed.prowlarrUrl)}&prowlarrApiKey=${encodeURIComponent(parsed.prowlarrApiKey)}`;
+        }
+        if (parsed.jackettEnabled && parsed.jackettUrl && parsed.jackettApiKey) {
+          url += `&jackettUrl=${encodeURIComponent(parsed.jackettUrl)}&jackettApiKey=${encodeURIComponent(parsed.jackettApiKey)}`;
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+
     fetch(url)
       .then((res) => res.json())
       .then((data) => {
