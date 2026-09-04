@@ -44,7 +44,10 @@ export interface StreamSource {
   title: string;
   magnet?: string;
   url?: string;
+  infoHash?: string;
+  fileIdx?: number;
   quality: '4K' | '1080p' | '720p' | '480p' | 'Auto';
+  codec?: string;
   size?: string;
   seeds?: number;
   peers?: number;
@@ -87,4 +90,5 @@ export interface UserSettings {
   defaultSubtitleLang: string;
   maxPeers: number;
   hardwareAcceleration: boolean;
+  addonUrls: string[];
 }

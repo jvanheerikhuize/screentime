@@ -4,6 +4,7 @@ import { MediaItem } from '@/types';
 export const FEATURED_HERO: MediaItem = {
   id: 'featured-1',
   tmdbId: 823464,
+  imdbId: 'tt4843632',
   title: 'Cosmos Laundromat',
   overview: 'On a desolate island, a suicidal sheep named Franck meets a quirky salesman named Victor, who offers him the gift of a lifetime: the chance to see what his life could have been.',
   posterPath: 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=800&auto=format&fit=crop&q=80',
@@ -21,6 +22,7 @@ export const SAMPLE_MEDIA_CATALOG: MediaItem[] = [
   {
     id: 'sample-1',
     tmdbId: 101,
+    imdbId: 'tt1254207',
     title: 'Big Buck Bunny',
     overview: 'A large and lovable rabbit deals with bullying forest creatures in this iconic open-source animated short film produced by the Blender Institute.',
     posterPath: 'https://images.unsplash.com/photo-1579783900882-c0d3dad7b119?w=800&auto=format&fit=crop&q=80',
@@ -35,6 +37,7 @@ export const SAMPLE_MEDIA_CATALOG: MediaItem[] = [
   {
     id: 'sample-2',
     tmdbId: 102,
+    imdbId: 'tt2423320',
     title: 'Tears of Steel',
     overview: 'Set in a dystopian future Amsterdam, a group of scientists and soldiers attempt to rewrite history to prevent a technological catastrophe.',
     posterPath: 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=800&auto=format&fit=crop&q=80',
@@ -49,6 +52,7 @@ export const SAMPLE_MEDIA_CATALOG: MediaItem[] = [
   {
     id: 'sample-3',
     tmdbId: 103,
+    imdbId: 'tt1727587',
     title: 'Sintel',
     overview: 'A lonely young woman searches for a baby dragon she befriended and nursed back to health after it is snatched by an adult dragon.',
     posterPath: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=800&auto=format&fit=crop&q=80',
@@ -63,6 +67,7 @@ export const SAMPLE_MEDIA_CATALOG: MediaItem[] = [
   {
     id: 'sample-4',
     tmdbId: 104,
+    imdbId: 'tt10584350',
     title: 'Cyberpunk Chronicles',
     overview: 'In a neon-drenched metropolis governed by rogue corporate algorithms, a rogue bio-hacker uncovers an encrypted truth.',
     posterPath: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?w=800&auto=format&fit=crop&q=80',
@@ -87,6 +92,7 @@ export const SAMPLE_MEDIA_CATALOG: MediaItem[] = [
   {
     id: 'sample-5',
     tmdbId: 105,
+    imdbId: 'tt0816692', // Interstellar
     title: 'Interstellar Horizons',
     overview: 'An expedition beyond the known solar system pushes human resilience and astrophysics to the absolute edge.',
     posterPath: 'https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=800&auto=format&fit=crop&q=80',
@@ -101,6 +107,7 @@ export const SAMPLE_MEDIA_CATALOG: MediaItem[] = [
   {
     id: 'sample-6',
     tmdbId: 106,
+    imdbId: 'tt2575988', // Silicon Valley
     title: 'Silicon Valley Heist',
     overview: 'A syndicate of rogue network engineers orchestrate the largest decentralized financial heist in human history.',
     posterPath: 'https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?w=800&auto=format&fit=crop&q=80',
@@ -178,7 +185,7 @@ export class TMDBService {
     if (!this.apiKey) return null;
 
     try {
-      const res = await fetch(`${TMDB_BASE_URL}/${mediaType}/${id}?api_key=${this.apiKey}&append_to_response=videos,credits`);
+      const res = await fetch(`${TMDB_BASE_URL}/${mediaType}/${id}?api_key=${this.apiKey}&append_to_response=videos,credits,external_ids`);
       if (!res.ok) return null;
       const data = await res.json();
 
@@ -188,10 +195,12 @@ export class TMDBService {
         if (trailer) trailerUrl = `https://www.youtube.com/watch?v=${trailer.key}`;
       }
 
+      const imdbId = data.external_ids?.imdb_id || data.imdb_id;
+
       return {
         id: data.id,
         tmdbId: data.id,
-        imdbId: data.imdb_id,
+        imdbId: imdbId || undefined,
         title: data.title || data.name,
         originalTitle: data.original_title || data.original_name,
         overview: data.overview || '',
