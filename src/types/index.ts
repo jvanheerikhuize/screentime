@@ -16,6 +16,14 @@ export interface MediaItem {
   duration?: number;
   trailerUrl?: string;
   seasons?: Season[];
+  /** Set for anime from AniList; streams are found by Kitsu id (absolute episode numbers). */
+  anime?: {
+    anilistId: number;
+    kitsuId?: number;
+    /** IMDb id and season of the matching series, used to find subtitles. */
+    imdbId?: string;
+    season?: number;
+  };
 }
 
 export interface Season {
@@ -59,7 +67,16 @@ export interface LiveChannel {
   id: string;
   name: string;
   category: 'News' | 'Space & Science' | 'Sports' | 'Documentary' | 'Music & Culture' | 'Entertainment' | 'General';
+  /** Display name, e.g. "Germany / International". */
   country: string;
+  /** ISO 3166-1 alpha-2 code when known (used for the country filter). */
+  countryCode?: string;
+  /** Hand-picked channel (artwork banner) or one from the Free-TV playlist (channel logo). */
+  source?: 'curated' | 'freetv';
+  /** Only viewable from its own country. */
+  geoBlocked?: boolean;
+  /** Not broadcasting around the clock. */
+  partTime?: boolean;
   language: string;
   logo: string;
   streamUrl: string;
@@ -96,12 +113,8 @@ export interface SubtitleTrack {
 }
 
 export interface UserSettings {
-  tmdbApiKey: string;
-  realDebridToken: string;
-  autoTranscode: boolean;
   defaultSubtitleLang: string;
-  maxPeers: number;
-  hardwareAcceleration: boolean;
+  /** Stremio stream addons queried for every title. */
   addonUrls: string[];
   // Self-Hosted Index Aggregators (Prowlarr / Jackett)
   prowlarrEnabled?: boolean;

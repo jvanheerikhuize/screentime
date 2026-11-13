@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { tmdbService } from '@/lib/metadata/tmdb';
 import { getStreamsForMedia } from '@/lib/streaming/streamSources';
-import { stremioScraper } from '@/lib/scrapers/stremioAddons';
+import { StremioAddonScraper, stremioScraper } from '@/lib/scrapers/stremioAddons';
 import { selfHostedAggregator } from '@/lib/scrapers/selfHostedAggregator';
+import { getTrackers } from '@/lib/streaming/trackers';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -24,24 +25,39 @@ export async function GET(
   const prowlarrApiKey = searchParams.get('prowlarrApiKey') || process.env.PROWLARR_API_KEY;
   const jackettUrl = searchParams.get('jackettUrl') || process.env.JACKETT_URL;
   const jackettApiKey = searchParams.get('jackettApiKey') || process.env.JACKETT_API_KEY;
+  // Stremio addons chosen in Settings (comma-separated); the built-in defaults otherwise.
+  const addons = searchParams.get('addons');
+  const addonScraper = addons ? new StremioAddonScraper(addons.split(',')) : stremioScraper;
 
   try {
-    const details = await tmdbService.getDetails(id, type);
-    const staticStreams = getStreamsForMedia(id);
+    // Details and the live tracker list (used in every magnet we build) in parallel.
+    const [details] = await Promise.all([tmdbService.getDetails(id, type), getTrackers()]);
+    // Built-in open-movie streams are keyed by TMDB id.
+    const staticStreams = getStreamsForMedia(id).length
+      ? getStreamsForMedia(id)
+      : details?.tmdbId
+        ? getStreamsForMedia(details.tmdbId)
+        : [];
 
-    const imdbId = searchParams.get('imdbId') || details?.imdbId;
+    const kitsuId = details?.anime?.kitsuId;
+    const imdbId = kitsuId ? undefined : searchParams.get('imdbId') || details?.imdbId;
     const mediaTitle = details?.title || 'Media';
-    const searchQuery = type === 'tv'
+    const searchQuery = details?.anime
+      ? type === 'tv'
+        ? `${mediaTitle} ${String(episode).padStart(2, '0')}`
+        : mediaTitle
+      : type === 'tv'
       ? `${mediaTitle} S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}`
       : `${mediaTitle} ${details?.releaseDate ? details.releaseDate.split('-')[0] : ''}`.trim();
 
     const fetchTasks: Promise<any[]>[] = [];
 
-    // 1. Stremio Addons (Torrentio, MediaFusion, KnightCrawler)
-    if (imdbId) {
+    // 1. Stremio addons (Torrentio, MediaFusion by default)
+    if (imdbId || kitsuId) {
       fetchTasks.push(
-        stremioScraper.fetchStreams({
+        addonScraper.fetchStreams({
           imdbId,
+          kitsuId,
           tmdbId: id,
           mediaType: type,
           season,

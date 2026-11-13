@@ -1,114 +1,82 @@
 import { NextRequest } from 'next/server';
-import { torrentManager } from '@/lib/streaming/torrentEngine';
-import { shouldTranscode, createTranscodeStream, getMimeType } from '@/lib/streaming/transcoder';
+import path from 'path';
 import { Readable } from 'stream';
+import { torrentManager } from '@/lib/streaming/torrentEngine';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+const MIME: Record<string, string> = {
+  '.mp4': 'video/mp4',
+  '.m4v': 'video/mp4',
+  '.mov': 'video/mp4',
+  '.webm': 'video/webm',
+  '.ogv': 'video/ogg',
+  '.mkv': 'video/x-matroska',
+  '.avi': 'video/x-msvideo',
+  '.ts': 'video/mp2t',
+};
+
+function json(status: number, body: object) {
+  return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+}
+
+/**
+ * Raw torrent file over HTTP with Range support (206 Partial Content).
+ * Browsers play MP4/WebM from here directly; ffmpeg reads other formats from here via
+ * /api/playback/transcode, which can seek because ranges are supported.
+ *   GET /api/stream?magnet=...&fileIndex=N
+ */
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const magnet = searchParams.get('magnet');
   const fileIndex = searchParams.get('fileIndex');
-  const forceTranscode = searchParams.get('transcode') === 'true';
-
-  if (!magnet) {
-    return new Response(JSON.stringify({ error: 'Missing magnet parameter' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
+  if (!magnet) return json(400, { error: 'Missing magnet parameter' });
 
   try {
-    const managedTorrent = await torrentManager.getOrCreateEngine(magnet);
-
-    let selectedFile = managedTorrent.selectedFile;
-    if (fileIndex !== null && fileIndex !== undefined && fileIndex !== '') {
+    const managed = await torrentManager.getOrCreateEngine(magnet);
+    let file = managed.selectedFile;
+    if (fileIndex) {
       const idx = parseInt(fileIndex, 10);
-      if (!isNaN(idx)) {
-        selectedFile = torrentManager.selectFile(magnet, idx);
+      if (!isNaN(idx)) file = torrentManager.selectFile(magnet, idx);
+    }
+    if (!file) return json(404, { error: 'No streamable video file found in torrent' });
+
+    const total = file.length;
+    const headers: Record<string, string> = {
+      'Accept-Ranges': 'bytes',
+      'Content-Type': MIME[path.extname(file.name).toLowerCase()] || 'application/octet-stream',
+      'Cache-Control': 'no-store',
+    };
+
+    const range = req.headers.get('range');
+    let start = 0;
+    let end = total - 1;
+    let status = 200;
+    if (range) {
+      const m = range.match(/bytes=(\d*)-(\d*)/);
+      if (m) {
+        if (m[1]) start = parseInt(m[1], 10);
+        if (m[2]) end = Math.min(parseInt(m[2], 10), total - 1);
+        if (!m[1] && m[2]) {
+          // suffix range: last N bytes
+          start = Math.max(0, total - parseInt(m[2], 10));
+          end = total - 1;
+        }
       }
-    }
-
-    if (!selectedFile) {
-      return new Response(JSON.stringify({ error: 'No streamable video file found in torrent' }), {
-        status: 404,
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-
-    const totalSize = selectedFile.length;
-    const fileName = selectedFile.name;
-    const mime = getMimeType(fileName);
-    const needsTranscoding = forceTranscode || (shouldTranscode(fileName) && !searchParams.has('raw'));
-
-    const rangeHeader = req.headers.get('range');
-
-    if (needsTranscoding) {
-      // Transcode via FFmpeg (stream remuxed to MP4 / AAC)
-      console.log(`[Stream] Transcoding on-the-fly for ${fileName}`);
-      const rawStream = selectedFile.createReadStream();
-      const { stream: transStream } = createTranscodeStream(rawStream, 'video/mp4');
-
-      const webStream = Readable.toWeb(transStream as any);
-      return new Response(webStream as ReadableStream, {
-        status: 200,
-        headers: {
-          'Content-Type': 'video/mp4',
-          'Accept-Ranges': 'none',
-          'Transfer-Encoding': 'chunked',
-          'Cache-Control': 'no-cache, no-store',
-        },
-      });
-    }
-
-    // Direct HTTP Range partial content stream
-    if (rangeHeader) {
-      const parts = rangeHeader.replace(/bytes=/, '').split('-');
-      const start = parseInt(parts[0], 10);
-      const end = parts[1] ? parseInt(parts[1], 10) : totalSize - 1;
-
-      if (start >= totalSize || end >= totalSize || start > end) {
-        return new Response(null, {
-          status: 416,
-          headers: { 'Content-Range': `bytes */${totalSize}` },
-        });
+      if (start >= total || start > end) {
+        return new Response(null, { status: 416, headers: { 'Content-Range': `bytes */${total}` } });
       }
-
-      const chunkSize = end - start + 1;
-      const fileStream = selectedFile.createReadStream({ start, end });
-      const webStream = Readable.toWeb(fileStream as any);
-
-      return new Response(webStream as ReadableStream, {
-        status: 206,
-        headers: {
-          'Content-Range': `bytes ${start}-${end}/${totalSize}`,
-          'Accept-Ranges': 'bytes',
-          'Content-Length': chunkSize.toString(),
-          'Content-Type': mime,
-          'Cache-Control': 'no-cache',
-        },
-      });
+      status = 206;
+      headers['Content-Range'] = `bytes ${start}-${end}/${total}`;
     }
+    headers['Content-Length'] = String(end - start + 1);
 
-    // Full stream (when no range specified)
-    const fileStream = selectedFile.createReadStream();
-    const webStream = Readable.toWeb(fileStream as any);
-
-    return new Response(webStream as ReadableStream, {
-      status: 200,
-      headers: {
-        'Content-Length': totalSize.toString(),
-        'Accept-Ranges': 'bytes',
-        'Content-Type': mime,
-        'Cache-Control': 'no-cache',
-      },
-    });
-  } catch (error: any) {
-    console.error('[Stream API] Error streaming torrent:', error);
-    return new Response(JSON.stringify({ error: error.message || 'Streaming failed' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    // Readable.toWeb destroys the torrent read stream when the client disconnects or cancels.
+    const nodeStream = file.createReadStream({ start, end });
+    req.signal.addEventListener('abort', () => nodeStream.destroy(), { once: true });
+    return new Response(Readable.toWeb(nodeStream) as ReadableStream, { status, headers });
+  } catch (error) {
+    return json(502, { error: error instanceof Error ? error.message : 'Streaming failed' });
   }
 }

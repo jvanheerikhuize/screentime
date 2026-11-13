@@ -1,26 +1,38 @@
 import { StreamSource } from '@/types';
+import { buildMagnet } from '@/lib/streaming/trackers';
 
 export const DEFAULT_ADDON_URLS = [
   'https://torrentio.strem.fun',
   'https://mediafusion.elfhosted.com',
-  'https://knightcrawler.elfhosted.com',
 ];
 
-const DEFAULT_TRACKERS = [
-  'udp://tracker.opentrackr.org:1337/announce',
-  'udp://open.tracker.cl:1337/announce',
-  'udp://9.rarbg.com:2810/announce',
-  'udp://tracker.openbittorrent.com:6969/announce',
-  'udp://exodus.desync.com:6969/announce',
-  'udp://tracker.torrent.eu.org:451/announce',
-  'udp://explodie.org:6969/announce',
-  'http://tracker.openbittorrent.com:80/announce',
-];
+// Public addon instances that have shut down; dropped from saved settings too.
+const RETIRED_ADDON_HOSTS = ['knightcrawler.elfhosted.com'];
 
-function buildMagnet(infoHash: string, title: string): string {
-  const trParams = DEFAULT_TRACKERS.map((t) => `tr=${encodeURIComponent(t)}`).join('&');
-  return `magnet:?xt=urn:btih:${infoHash.toLowerCase()}&dn=${encodeURIComponent(title)}&${trParams}`;
+/**
+ * Keeps valid http(s) addon URLs (max 10, without trailing slashes or /manifest.json) and
+ * drops retired public instances; falls back to the defaults if nothing is left.
+ */
+export function cleanAddonUrls(urls: string[] | undefined | null): string[] {
+  const kept: string[] = [];
+  for (const raw of urls || []) {
+    try {
+      const url = new URL(raw.trim());
+      if (!/^https?:$/.test(url.protocol) || RETIRED_ADDON_HOSTS.includes(url.hostname)) continue;
+      const clean = url.toString().replace(/\/manifest\.json$/, '').replace(/\/+$/, '');
+      if (!kept.includes(clean)) kept.push(clean);
+    } catch {
+      // not a URL
+    }
+  }
+  return kept.length > 0 ? kept.slice(0, 10) : DEFAULT_ADDON_URLS;
 }
+
+/** True when the list is just the built-in defaults (so it needn't be sent to the server). */
+export function isDefaultAddonList(urls: string[]): boolean {
+  return urls.length === DEFAULT_ADDON_URLS.length && urls.every((u, i) => u === DEFAULT_ADDON_URLS[i]);
+}
+
 
 function parseQuality(text: string): '4K' | '1080p' | '720p' | '480p' | 'Auto' {
   const lower = text.toLowerCase();
@@ -55,25 +67,33 @@ export class StremioAddonScraper {
   private addonUrls: string[];
 
   constructor(customAddons?: string[]) {
-    this.addonUrls = customAddons && customAddons.length > 0 ? customAddons : DEFAULT_ADDON_URLS;
+    this.addonUrls = cleanAddonUrls(customAddons);
   }
 
   public async fetchStreams(params: {
     imdbId?: string;
+    /** Kitsu id for anime; episodes are numbered absolutely (no seasons). */
+    kitsuId?: number;
     tmdbId?: number | string;
     mediaType: 'movie' | 'tv';
     season?: number;
     episode?: number;
     title?: string;
   }): Promise<StreamSource[]> {
-    const { imdbId, mediaType, season = 1, episode = 1, title = 'Media' } = params;
+    const { imdbId, kitsuId, mediaType, season = 1, episode = 1, title = 'Media' } = params;
 
-    if (!imdbId) {
-      console.log(`[StremioScraper] No IMDb ID provided for ${title}, skipping addon query.`);
+    if (!imdbId && !kitsuId) {
+      console.log(`[StremioScraper] No IMDb or Kitsu id for ${title}, skipping addon query.`);
       return [];
     }
 
-    const streamId = mediaType === 'tv' ? `${imdbId}:${season}:${episode}` : imdbId;
+    const streamId = kitsuId
+      ? mediaType === 'tv'
+        ? `kitsu:${kitsuId}:${episode}`
+        : `kitsu:${kitsuId}`
+      : mediaType === 'tv'
+        ? `${imdbId}:${season}:${episode}`
+        : imdbId!;
     const typePath = mediaType === 'tv' ? 'series' : 'movie';
 
     const results: StreamSource[] = [];

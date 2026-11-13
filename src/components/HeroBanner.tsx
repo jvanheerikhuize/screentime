@@ -1,7 +1,7 @@
 'use client';
 
-import React from 'react';
-import { Play, Info, Star, Clock, Sparkles } from 'lucide-react';
+import React, { useState } from 'react';
+import { Play, Info, Star } from 'lucide-react';
 import { MediaItem } from '@/types';
 
 interface HeroBannerProps {
@@ -10,86 +10,95 @@ interface HeroBannerProps {
   onMoreInfo: (media: MediaItem) => void;
 }
 
+const HERO_HEIGHT = 'h-[72vh] min-h-[520px] max-h-[820px]';
+
+/** Full-bleed featured title. Renders a skeleton while `media` is null. */
 export const HeroBanner: React.FC<HeroBannerProps> = ({ media, onPlay, onMoreInfo }) => {
-  if (!media) return null;
+  const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
+
+  if (!media) {
+    return (
+      <div className={`relative w-full ${HERO_HEIGHT}`} aria-hidden="true">
+        <div className="absolute inset-0 skeleton opacity-40" />
+        <div className="absolute inset-0 bg-gradient-to-t from-[var(--background)] via-transparent to-transparent" />
+        <div className="relative h-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col justify-end pb-16 gap-4">
+          <div className="h-4 w-40 rounded skeleton" />
+          <div className="h-12 w-[28rem] max-w-full rounded-lg skeleton" />
+          <div className="h-4 w-[34rem] max-w-full rounded skeleton" />
+          <div className="h-4 w-[24rem] max-w-full rounded skeleton" />
+          <div className="flex gap-3 pt-3">
+            <div className="h-12 w-32 rounded-full skeleton" />
+            <div className="h-12 w-36 rounded-full skeleton" />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const year = (media.releaseDate || media.firstAirDate)?.split('-')[0];
+  const imageReady = !media.backdropPath || loadedSrc === media.backdropPath;
+  const meta = [
+    media.mediaType === 'tv' ? 'Series' : 'Film',
+    year,
+    media.duration ? `${Math.floor(media.duration / 60) ? `${Math.floor(media.duration / 60)}h ` : ''}${media.duration % 60}m` : null,
+    ...(media.genres || []).slice(0, 3),
+  ].filter(Boolean);
 
   return (
-    <div className="relative w-full h-[70vh] min-h-[500px] max-h-[750px] overflow-hidden rounded-3xl mb-12 shadow-2xl border border-zinc-800/60 group">
-      {/* Background Image with Cinematic Gradient */}
-      <div className="absolute inset-0">
-        {media.backdropPath && (
-          <img
-            src={media.backdropPath}
-            alt={media.title}
-            className="w-full h-full object-cover object-center scale-105 group-hover:scale-100 transition-transform duration-1000 ease-out"
-          />
-        )}
-        <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-zinc-950/60 to-transparent" />
-        <div className="absolute inset-0 bg-gradient-to-r from-zinc-950 via-zinc-950/40 to-transparent w-full md:w-3/4" />
-      </div>
+    <div className={`relative w-full ${HERO_HEIGHT} overflow-hidden`}>
+      {media.backdropPath && (
+        <img
+          src={media.backdropPath}
+          alt=""
+          onLoad={() => setLoadedSrc(media.backdropPath!)}
+          className={`absolute inset-0 w-full h-full object-cover object-[center_20%] transition-all duration-[1200ms] ease-out ${
+            imageReady ? 'opacity-100 scale-100' : 'opacity-0 scale-105'
+          }`}
+        />
+      )}
+      {/* Cinematic shading: bottom fade into the page, left fade behind the text */}
+      <div className="absolute inset-0 bg-gradient-to-t from-[var(--background)] via-[color-mix(in_srgb,var(--background)_35%,transparent)] to-black/30" />
+      <div className="absolute inset-0 bg-gradient-to-r from-[color-mix(in_srgb,var(--background)_92%,transparent)] via-[color-mix(in_srgb,var(--background)_45%,transparent)] to-transparent md:via-transparent" />
 
-      {/* Content */}
-      <div className="relative h-full max-w-7xl mx-auto px-6 sm:px-8 lg:px-12 flex flex-col justify-end pb-12 z-10">
-        <div className="max-w-2xl space-y-4">
-          {/* Badge */}
-          <div className="flex items-center gap-3">
-            <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-rose-600/90 text-white text-xs font-semibold uppercase tracking-wider backdrop-blur-md shadow-lg shadow-rose-600/20">
-              <Sparkles className="w-3 h-3" />
-              Featured Stream
-            </span>
+      <div className="relative h-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col justify-end pb-14 sm:pb-16">
+        <div className="max-w-xl space-y-4 animate-[hero-in_700ms_ease-out_both]">
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs sm:text-sm font-medium text-zinc-300">
             {media.voteAverage > 0 && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-zinc-900/80 border border-zinc-700/60 text-amber-400 text-xs font-semibold backdrop-blur-md">
+              <span className="inline-flex items-center gap-1 text-white">
                 <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
-                {media.voteAverage} Rating
+                {media.voteAverage.toFixed(1)}
               </span>
             )}
-            {media.duration && (
-              <span className="inline-flex items-center gap-1 text-zinc-300 text-xs font-medium">
-                <Clock className="w-3.5 h-3.5 text-zinc-400" />
-                {media.duration} mins
-              </span>
-            )}
-          </div>
+            {meta.map((m, i) => (
+              <React.Fragment key={`${m}-${i}`}>
+                {(i > 0 || media.voteAverage > 0) && <span className="text-zinc-600">•</span>}
+                <span>{m}</span>
+              </React.Fragment>
+            ))}
+          </p>
 
-          {/* Title */}
-          <h1 className="text-3xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight text-white leading-tight drop-shadow-md">
+          <h1 className="font-display text-4xl sm:text-6xl lg:text-7xl font-bold tracking-tight text-white leading-[0.95] text-balance drop-shadow-[0_4px_24px_rgba(0,0,0,0.5)]">
             {media.title}
           </h1>
 
-          {/* Genres */}
-          {media.genres && media.genres.length > 0 && (
-            <div className="flex flex-wrap gap-2 pt-1">
-              {media.genres.map((g) => (
-                <span
-                  key={g}
-                  className="text-xs px-2.5 py-0.5 rounded-md bg-zinc-800/80 border border-zinc-700/40 text-zinc-300 backdrop-blur-sm"
-                >
-                  {g}
-                </span>
-              ))}
-            </div>
+          {media.overview && (
+            <p className="text-zinc-300/90 text-sm sm:text-base leading-relaxed line-clamp-3 max-w-lg">{media.overview}</p>
           )}
 
-          {/* Overview */}
-          <p className="text-zinc-300 text-sm sm:text-base line-clamp-3 leading-relaxed drop-shadow">
-            {media.overview}
-          </p>
-
-          {/* Actions */}
           <div className="flex items-center gap-3 pt-2">
             <button
               onClick={() => onPlay(media)}
-              className="flex items-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 text-white font-semibold text-sm sm:text-base shadow-xl shadow-rose-600/30 hover:scale-105 active:scale-95 transition-all"
+              className="inline-flex items-center gap-2 pl-5 pr-6 py-3 rounded-full bg-white text-black font-semibold text-sm sm:text-base shadow-xl shadow-black/30 hover:bg-zinc-200 active:scale-[0.97] transition-all"
             >
-              <Play className="w-5 h-5 fill-white" />
-              Stream Now
+              <Play className="w-5 h-5 fill-current" />
+              Play
             </button>
             <button
               onClick={() => onMoreInfo(media)}
-              className="flex items-center gap-2 px-5 py-3 rounded-xl bg-zinc-900/80 hover:bg-zinc-800/90 text-zinc-200 border border-zinc-700/60 font-semibold text-sm sm:text-base backdrop-blur-md hover:scale-105 active:scale-95 transition-all"
+              className="inline-flex items-center gap-2 px-5 py-3 rounded-full bg-white/10 hover:bg-white/20 text-white font-semibold text-sm sm:text-base backdrop-blur-xl ring-1 ring-white/15 active:scale-[0.97] transition-all"
             >
-              <Info className="w-5 h-5 text-zinc-400" />
-              Sources & Info
+              <Info className="w-5 h-5" />
+              More info
             </button>
           </div>
         </div>

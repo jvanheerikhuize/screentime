@@ -15,7 +15,7 @@ export async function GET(req: NextRequest) {
   try {
     const results = await tmdbService.search(q);
     return NextResponse.json({ results });
-  } catch (error: any) {
+  } catch {
     return NextResponse.json({ results: [] });
   }
 }
