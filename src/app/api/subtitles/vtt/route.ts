@@ -6,7 +6,9 @@ export const dynamic = 'force-dynamic';
 
 /** Fetches an SRT subtitle file and serves it as same-origin WebVTT for the <track> element. */
 export async function GET(req: NextRequest) {
-  const url = new URL(req.url).searchParams.get('url') || '';
+  const params = new URL(req.url).searchParams;
+  const url = params.get('url') || '';
+  const offset = Math.max(0, parseFloat(params.get('offset') || '0') || 0);
   if (!isAllowedSubtitleUrl(url)) {
     return new Response('Subtitle host not allowed', { status: 400 });
   }
@@ -14,7 +16,7 @@ export async function GET(req: NextRequest) {
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(15000), cache: 'no-store' });
     if (!res.ok) return new Response('Subtitle download failed', { status: 502 });
-    const vtt = srtToVtt(await res.text());
+    const vtt = srtToVtt(await res.text(), offset);
     return new Response(vtt, {
       headers: {
         'Content-Type': 'text/vtt; charset=utf-8',

@@ -259,6 +259,20 @@ export class TorrentEngineManager {
     };
   }
 
+  /** Stop a torrent the player no longer needs (source switched or player closed). */
+  public release(magnetUri: string): boolean {
+    const key = magnetUri.trim();
+    const managed = this.torrents.get(key);
+    if (!managed) return false;
+    this.torrents.delete(key);
+    try {
+      managed.engine.destroy(() => {});
+    } catch {
+      // already destroyed
+    }
+    return true;
+  }
+
   /** Ask the swarm for the selected file's first and last pieces before anything else. */
   private prioritizeEdges(managed: ManagedTorrent) {
     const file = managed.selectedFile;

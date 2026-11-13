@@ -14,7 +14,8 @@ export interface PlaybackContext {
 interface MediaDetailModalProps {
   media: MediaItem;
   onClose: () => void;
-  onPlaySource: (source: StreamSource, media: MediaItem, context: PlaybackContext) => void;
+  /** `sources` is the chosen source first, then fallbacks the player may switch to. */
+  onPlaySource: (sources: StreamSource[], media: MediaItem, context: PlaybackContext) => void;
 }
 
 function buildMediaUrl(media: MediaItem, season: number, episode: number): string {
@@ -98,7 +99,8 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({ media: baseM
     setEpisode(episodeNumber);
   };
 
-  const play = (source: StreamSource) => onPlaySource(source, media, isSeries ? { season, episode } : {});
+  const play = (source: StreamSource) =>
+    onPlaySource([source, ...ranked.filter((s) => s !== source)].slice(0, 8), media, isSeries ? { season, episode } : {});
 
   const year = (media.releaseDate || media.firstAirDate)?.split('-')[0];
   const playLabel = isSeries ? `Play S${season} · E${episode}` : 'Play';

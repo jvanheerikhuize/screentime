@@ -5,7 +5,8 @@ import { Navbar } from '@/components/Navbar';
 import { HeroBanner } from '@/components/HeroBanner';
 import { MediaCarousel } from '@/components/MediaCarousel';
 import { MediaDetailModal, PlaybackContext } from '@/components/MediaDetailModal';
-import { VideoPlayerModal, SubtitleQuery } from '@/components/VideoPlayerModal';
+import { VideoPlayerModal, SubtitleQuery, PlayableSource } from '@/components/VideoPlayerModal';
+import { rankSources } from '@/lib/streaming/pickSource';
 import { DirectStreamModal } from '@/components/DirectStreamModal';
 import { SettingsModal } from '@/components/SettingsModal';
 import { LiveChannelsGrid } from '@/components/LiveChannelsGrid';
@@ -37,12 +38,8 @@ export default function Home() {
 
   // Active Player state
   const [activePlayer, setActivePlayer] = useState<{
-    isOpen: boolean;
     title: string;
-    streamUrl: string;
-    magnet?: string;
-    fileIndex?: number;
-    isTorrent: boolean;
+    sources: PlayableSource[];
     isLive?: boolean;
     subtitleQuery?: SubtitleQuery;
   } | null>(null);
@@ -60,72 +57,44 @@ export default function Home() {
       .catch((err) => console.error('Failed to load catalog:', err));
   }, []);
 
+  const toPlayable = (sources: StreamSource[]): PlayableSource[] =>
+    sources
+      .filter((s) => s.magnet || s.url)
+      .map((s) => (s.magnet ? { magnet: s.magnet, fileIdx: s.fileIdx, label: s.name } : { url: s.url, label: s.name }));
+
   const handlePlayMedia = (media: MediaItem) => {
     const sources = OPEN_SOURCE_STREAMS[String(media.id)] || OPEN_SOURCE_STREAMS[String(media.tmdbId)] || [];
     if (sources.length > 0) {
-      handlePlaySource(sources[0], media, {});
+      handlePlaySource(rankSources(sources), media, {});
     } else {
       setSelectedMedia(media);
     }
   };
 
-  const handlePlaySource = (source: StreamSource, media: MediaItem, context: PlaybackContext) => {
+  const handlePlaySource = (sources: StreamSource[], media: MediaItem, context: PlaybackContext) => {
+    const playable = toPlayable(sources);
+    if (!playable.length) return;
     setSelectedMedia(null);
     const episodeTag = context.season ? ` · S${context.season}E${context.episode}` : '';
     const subtitleQuery: SubtitleQuery | undefined = media.imdbId
       ? { imdbId: media.imdbId, mediaType: media.mediaType, season: context.season, episode: context.episode }
       : undefined;
-    if (source.type === 'torrent' && source.magnet) {
-      setActivePlayer({
-        isOpen: true,
-        title: `${media.title}${episodeTag}`,
-        streamUrl: `/api/stream?magnet=${encodeURIComponent(source.magnet)}`,
-        magnet: source.magnet,
-        fileIndex: source.fileIdx,
-        isTorrent: true,
-        subtitleQuery,
-      });
-    } else if (source.url) {
-      setActivePlayer({
-        isOpen: true,
-        title: `${media.title}${episodeTag}`,
-        streamUrl: source.url,
-        isTorrent: false,
-        subtitleQuery,
-      });
-    }
+    setActivePlayer({ title: `${media.title}${episodeTag}`, sources: playable, subtitleQuery });
   };
 
   const handlePlayDirectMagnet = (magnet: string, title: string) => {
     setSelectedMedia(null);
     setIsMagnetModalOpen(false);
-    setActivePlayer({
-      isOpen: true,
-      title: title || 'Custom Torrent Stream',
-      streamUrl: `/api/stream?magnet=${encodeURIComponent(magnet)}`,
-      magnet,
-      isTorrent: true,
-    });
+    setActivePlayer({ title: title || 'Custom Torrent Stream', sources: [{ magnet }] });
   };
 
   const handlePlayDirectUrl = (url: string, title: string) => {
     setIsMagnetModalOpen(false);
-    setActivePlayer({
-      isOpen: true,
-      title: title || 'Direct Stream',
-      streamUrl: url,
-      isTorrent: false,
-    });
+    setActivePlayer({ title: title || 'Direct Stream', sources: [{ url }] });
   };
 
   const handlePlayLiveChannel = (channel: LiveChannel) => {
-    setActivePlayer({
-      isOpen: true,
-      title: `${channel.name} (Live)`,
-      streamUrl: channel.streamUrl,
-      isTorrent: false,
-      isLive: channel.isLive,
-    });
+    setActivePlayer({ title: `${channel.name} (Live)`, sources: [{ url: channel.streamUrl }], isLive: channel.isLive });
   };
 
   return (
@@ -233,14 +202,11 @@ export default function Home() {
       )}
 
       {/* Fullscreen Video Player Modal */}
-      {activePlayer && activePlayer.isOpen && (
+      {activePlayer && (
         <VideoPlayerModal
           title={activePlayer.title}
-          streamUrl={activePlayer.streamUrl}
-          magnet={activePlayer.magnet}
-          isTorrent={activePlayer.isTorrent}
+          sources={activePlayer.sources}
           isLive={activePlayer.isLive}
-          fileIndex={activePlayer.fileIndex}
           subtitleQuery={activePlayer.subtitleQuery}
           onClose={() => setActivePlayer(null)}
         />

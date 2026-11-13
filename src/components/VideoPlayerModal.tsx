@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  X, Play, Pause, Volume2, VolumeX, Maximize, Minimize, RotateCcw, RotateCw, Captions, AlertCircle, Check,
+  X, Play, Pause, Volume2, VolumeX, Maximize, Minimize, RotateCcw, RotateCw, Captions, AlertCircle, Check, SkipForward,
 } from 'lucide-react';
 import Hls from 'hls.js';
 import { getPreferredSubtitleLang, matchesLanguage, setPreferredSubtitleLang } from '@/lib/subtitleLanguages';
@@ -14,12 +14,17 @@ export interface SubtitleQuery {
   episode?: number;
 }
 
+/** One way to play the title; the player falls back through these in order. */
+export interface PlayableSource {
+  magnet?: string;
+  url?: string;
+  fileIdx?: number;
+  label?: string;
+}
+
 interface VideoPlayerModalProps {
   title: string;
-  streamUrl: string;
-  magnet?: string;
-  fileIndex?: number;
-  isTorrent?: boolean;
+  sources: PlayableSource[];
   isLive?: boolean;
   subtitleQuery?: SubtitleQuery;
   onClose: () => void;
@@ -45,11 +50,38 @@ interface PrepareStatus {
   files: { index: number; name: string; length: number }[];
 }
 
+type Phase = 'preparing' | 'probing' | 'ready';
+type Mode = 'direct' | 'transcode';
+
 const VIDEO_FILE = /\.(mp4|mkv|webm|avi|mov|m4v|wmv|ts)$/i;
-// Seconds of video that must be available ahead before (re)starting after a stall.
-// Doubles on every stall during playback (15 → 30 → 60) so a slow source stalls less often.
+// Seconds that must be available ahead before (re)starting after a stall; doubles per stall.
 const START_BUFFER_SECONDS = 15;
 const MAX_BUFFER_SECONDS = 60;
+// Failover thresholds while a torrent is still preparing.
+const NO_PEERS_MS = 20_000;
+const SLOW_CHECK_MS = 30_000;
+const MAX_PREPARE_MS = 90_000;
+const MAX_ETA_SECONDS = 90;
+// Mid-playback: switch source if a stall on a too-slow swarm lasts this long.
+const MAX_STALL_MS = 45_000;
+
+// Torrents are released shortly after the player leaves them; the delay absorbs React
+// StrictMode's dev-only unmount/remount so we don't kill a swarm we're about to reuse.
+const pendingRelease = new Map<string, ReturnType<typeof setTimeout>>();
+function scheduleRelease(magnet: string) {
+  clearTimeout(pendingRelease.get(magnet));
+  pendingRelease.set(
+    magnet,
+    setTimeout(() => {
+      pendingRelease.delete(magnet);
+      fetch(`/api/stream/release?magnet=${encodeURIComponent(magnet)}`, { method: 'POST', keepalive: true }).catch(() => {});
+    }, 1500)
+  );
+}
+function cancelRelease(magnet: string) {
+  clearTimeout(pendingRelease.get(magnet));
+  pendingRelease.delete(magnet);
+}
 
 function formatTime(secs: number): string {
   if (!isFinite(secs) || secs < 0) return '0:00';
@@ -71,52 +103,74 @@ function bufferedAhead(video: HTMLVideoElement): number {
   return 0;
 }
 
-export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
-  title,
-  streamUrl,
-  magnet,
-  fileIndex: initialFileIndex,
-  isTorrent = false,
-  isLive = false,
-  subtitleQuery,
-  onClose,
-}) => {
+export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sources, isLive = false, subtitleQuery, onClose }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const [fileIndex, setFileIndex] = useState<number | undefined>(initialFileIndex);
-  const [transcode, setTranscode] = useState(false);
-  const [prepared, setPrepared] = useState(!isTorrent);
-  const [prepare, setPrepare] = useState<PrepareStatus | null>(null);
+  // --- Source selection & pipeline state ---
+  const [sourceIndex, setSourceIndex] = useState(0);
+  const [fileOverride, setFileOverride] = useState<number | undefined>(undefined);
+  const source = sources[sourceIndex];
+  const magnet = source?.magnet;
+  const isTorrent = Boolean(magnet);
+  const fileIndex = fileOverride ?? source?.fileIdx;
 
+  const [rawPhase, setPhase] = useState<Phase>(isTorrent ? 'preparing' : 'probing');
+  const [mode, setMode] = useState<Mode>('direct');
+  const [offset, setOffset] = useState(0); // transcode start position (seconds into the film)
+  const [knownDuration, setKnownDuration] = useState(0);
+  const [prepare, setPrepare] = useState<PrepareStatus | null>(null);
+  const [reencoding, setReencoding] = useState(false);
+
+  // --- Playback UI state ---
   const [isPlaying, setIsPlaying] = useState(false);
   const [buffering, setBuffering] = useState(true);
   const [bufferTarget, setBufferTarget] = useState(START_BUFFER_SECONDS);
   const [ahead, setAhead] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
+  const [mediaDuration, setMediaDuration] = useState(0);
   const [bufferedEnd, setBufferedEnd] = useState(0);
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showControls, setShowControls] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const [subtitles, setSubtitles] = useState<SubtitleOption[]>([]);
   const [activeSub, setActiveSub] = useState<SubtitleOption | null>(null);
   const [subMenuOpen, setSubMenuOpen] = useState(false);
 
-  // The viewer's intent: true unless they paused. Auto-pauses for buffering don't change it.
   const wantPlay = useRef(true);
   const autoPausing = useRef(false);
   const justSeeked = useRef(false);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Latest torrent status, readable from interval callbacks without re-subscribing.
   const prepareRef = useRef<PrepareStatus | null>(null);
+  const sourceStartedAt = useRef(0);
+  const bufferingSince = useRef(0);
+  const resumeAt = useRef(0);
 
-  const activeUrl = isTorrent && magnet
-    ? `/api/stream?magnet=${encodeURIComponent(magnet)}${fileIndex !== undefined ? `&fileIndex=${fileIndex}` : ''}${transcode ? '&transcode=true' : ''}`
-    : streamUrl;
+  // The film timeline: in transcode mode the <video> starts at 0 at `offset`.
+  const base = mode === 'transcode' ? offset : 0;
+  const duration = mode === 'transcode' ? knownDuration : mediaDuration || knownDuration;
+  const timeline = useRef({ base: 0, duration: 0 });
+  useEffect(() => {
+    timeline.current = { base, duration };
+  }, [base, duration]);
+  const filmTime = () => timeline.current.base + (videoRef.current?.currentTime || 0);
+
+  const sourceQuery = magnet
+    ? `magnet=${encodeURIComponent(magnet)}${fileIndex !== undefined ? `&fileIndex=${fileIndex}` : ''}`
+    : `url=${encodeURIComponent(source?.url || '')}`;
+  const directUrl = magnet ? `/api/stream?${sourceQuery}` : source?.url || '';
+  // Live/HLS streams can't be probed or converted: go straight to playback.
+  const skipProbe = isLive || /\.m3u8(\?|$)/i.test(directUrl);
+  const phase: Phase = rawPhase === 'probing' && skipProbe ? 'ready' : rawPhase;
+  const activeUrl = mode === 'transcode' ? `/api/playback/transcode?${sourceQuery}&start=${offset.toFixed(2)}` : directUrl;
+
+  useEffect(() => {
+    sourceStartedAt.current = Date.now();
+  }, [sourceIndex, fileOverride]);
 
   // Lock page scroll behind the player.
   useEffect(() => {
@@ -127,29 +181,87 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
     };
   }, []);
 
-  // 1. Torrent pre-buffer: poll until the start of the file is downloaded, then keep polling for stats.
+  // Stop downloading a torrent once the player leaves it (source switch or close).
   useEffect(() => {
-    if (!isTorrent || !magnet) return;
+    if (!magnet) return;
+    cancelRelease(magnet);
+    return () => scheduleRelease(magnet);
+  }, [magnet]);
+
+  // --- Source switching ---
+  const resetPipeline = useCallback((nextIsTorrent: boolean) => {
+    setPhase(nextIsTorrent ? 'preparing' : 'probing');
+    setMode('direct');
+    setOffset(0);
+    setKnownDuration(0);
+    setMediaDuration(0);
+    setPrepare(null);
+    prepareRef.current = null;
+    setReencoding(false);
+    setBuffering(true);
+    setBufferTarget(START_BUFFER_SECONDS);
+    setError(null);
+    bufferingSince.current = 0;
+  }, []);
+
+  const tryNextSource = useCallback(
+    (reason: string, keepPosition: boolean) => {
+      const next = sourceIndex + 1;
+      if (next >= sources.length) {
+        setError(`${reason} No other sources are available for this title.`);
+        return;
+      }
+      resumeAt.current = keepPosition ? filmTime() : 0;
+      setNotice(`${reason} Switching to another source (${next + 1} of ${sources.length})…`);
+      setFileOverride(undefined);
+      setSourceIndex(next);
+      resetPipeline(Boolean(sources[next].magnet));
+    },
+     
+    [sourceIndex, sources, resetPipeline]
+  );
+  const tryNextRef = useRef(tryNextSource);
+  useEffect(() => {
+    tryNextRef.current = tryNextSource;
+  }, [tryNextSource]);
+
+  useEffect(() => {
+    if (!notice) return;
+    const t = setTimeout(() => setNotice(null), 7000);
+    return () => clearTimeout(t);
+  }, [notice]);
+
+  // --- 1. Torrent status: pre-buffer, stats, and failover while preparing ---
+  useEffect(() => {
+    if (!magnet) return;
     let cancelled = false;
     let failures = 0;
     const poll = async () => {
       try {
-        // Byte offset of the playback position, so the server reports what's downloaded from there.
-        const v = videoRef.current;
         const size = prepareRef.current?.fileSize || 0;
-        const from = v && size && isFinite(v.duration) && v.duration > 0 ? Math.floor((v.currentTime / v.duration) * size) : 0;
-        const qs = `magnet=${encodeURIComponent(magnet)}${fileIndex !== undefined ? `&fileIndex=${fileIndex}` : ''}&from=${from}`;
-        const res = await fetch(`/api/stream/prepare?${qs}`);
+        const { duration: dur } = timeline.current;
+        const from = size && dur > 0 ? Math.floor((filmTime() / dur) * size) : 0;
+        const res = await fetch(`/api/stream/prepare?${sourceQuery}&from=${from}`);
         if (!res.ok) throw new Error(`prepare failed: ${res.status}`);
         const data: PrepareStatus = await res.json();
         if (cancelled) return;
         failures = 0;
         prepareRef.current = data;
         setPrepare(data);
-        if (data.state === 'ready') setPrepared(true);
-        if (data.state === 'error') setError(data.error || 'Could not connect to this torrent.');
+
+        setPhase((p) => {
+          if (p !== 'preparing') return p;
+          if (data.state === 'ready') return 'probing';
+          const elapsed = Date.now() - sourceStartedAt.current;
+          const remaining = Math.max(0, data.headTarget - data.headBytes);
+          const eta = data.downloadSpeed > 0 ? remaining / data.downloadSpeed : Infinity;
+          if (data.state === 'error') tryNextRef.current('Couldn’t connect to this source.', false);
+          else if (elapsed > NO_PEERS_MS && data.peers === 0) tryNextRef.current('No peers for this source.', false);
+          else if (elapsed > SLOW_CHECK_MS && data.state === 'buffering' && eta > MAX_ETA_SECONDS) tryNextRef.current('This source is too slow.', false);
+          else if (elapsed > MAX_PREPARE_MS) tryNextRef.current('This source is too slow.', false);
+          return p;
+        });
       } catch {
-        // Tolerate transient failures, but don't spin forever if the stream server is broken.
         if (!cancelled && ++failures >= 6) setError('The streaming server isn’t responding. Try again in a moment.');
       }
     };
@@ -159,16 +271,52 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
       cancelled = true;
       clearInterval(id);
     };
-  }, [isTorrent, magnet, fileIndex]);
+     
+  }, [magnet, sourceQuery]);
 
-  // 2. Attach the media source once prepared.
+  // --- 2. Probe: can the browser play this file directly, or does it need converting? ---
+  useEffect(() => {
+    if (phase !== 'probing') return;
+    let cancelled = false;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 60_000);
+    fetch(`/api/playback/probe?${sourceQuery}`, { signal: controller.signal })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((info) => {
+        if (cancelled) return;
+        const start = resumeAt.current;
+        if (info?.duration) setKnownDuration(info.duration);
+        if (info && !info.directPlayable) {
+          setMode('transcode');
+          setOffset(start);
+          setReencoding(Boolean(info.reencodesVideo));
+          resumeAt.current = 0;
+        } else {
+          setMode('direct');
+        }
+        setPhase('ready');
+      })
+      .catch(() => {
+        if (cancelled) return;
+        // Couldn't inspect the file: let the browser try; a playback error falls back to converting.
+        setMode('direct');
+        setPhase('ready');
+      })
+      .finally(() => clearTimeout(timer));
+    return () => {
+      cancelled = true;
+      controller.abort();
+      clearTimeout(timer);
+    };
+  }, [phase, sourceQuery]);
+
+  // --- 3. Attach the media source ---
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || !prepared) return;
+    if (!video || phase !== 'ready' || !activeUrl) return;
 
     let hls: Hls | null = null;
-    const isHls = activeUrl.includes('.m3u8') || isLive;
-    if (isHls && Hls.isSupported()) {
+    if ((/\.m3u8(\?|$)/i.test(activeUrl) || isLive) && Hls.isSupported()) {
       hls = new Hls({ enableWorker: true, lowLatencyMode: true, backBufferLength: 90 });
       hls.loadSource(activeUrl);
       hls.attachMedia(video);
@@ -184,55 +332,62 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
 
     return () => {
       hls?.destroy();
-      // Abort the download when the source changes or the player closes.
       video.removeAttribute('src');
       video.load();
     };
-  }, [activeUrl, isLive, prepared]);
+  }, [activeUrl, isLive, phase]);
 
-  // 3. Buffer gate: hold playback until enough is available ahead, then (re)start.
-  // Chrome stops fetching a paused video after a few seconds of buffer, so the browser's own
-  // buffer can't be the only signal: for torrents we ask the server how much is downloaded
-  // from the current position; for HTTP we also accept "browser went idle with data buffered".
+  // --- 4. Buffer gate: hold playback until enough is available ahead, then (re)start ---
+  // Chrome stops fetching a paused video after a few seconds, so for torrents we ask the server
+  // how much is downloaded from the current position, and otherwise accept "browser went idle".
   useEffect(() => {
-    if (!buffering || !prepared) return;
+    if (!buffering || phase !== 'ready') return;
+    if (!bufferingSince.current) bufferingSince.current = Date.now();
     const id = setInterval(() => {
       const video = videoRef.current;
       if (!video) return;
       const a = bufferedAhead(video);
-      const nearEnd = isFinite(video.duration) && video.currentTime + a >= video.duration - 0.5;
+      const { duration: dur } = timeline.current;
+      const now = filmTime();
+      const nearEnd = dur > 0 && now + a >= dur - 0.5;
+      const browserIdle = video.networkState === video.NETWORK_IDLE && a >= 1;
       let enough: boolean;
-      let progressSecs = a;
+      let shown = a;
+
       if (isLive) {
         enough = video.readyState >= 3;
-      } else if (isTorrent) {
+      } else if (magnet) {
         const st = prepareRef.current;
-        const bytesPerSec = st?.fileSize && isFinite(video.duration) && video.duration > 0 ? st.fileSize / video.duration : 0;
+        const bytesPerSec = st?.fileSize && dur > 0 ? st.fileSize / dur : 0;
         const serverAhead = st?.complete ? Infinity : bytesPerSec ? (st?.aheadBytes || 0) / bytesPerSec : 0;
-        progressSecs = Math.max(a, isFinite(serverAhead) ? serverAhead : bufferTarget);
-        // Without a known duration (e.g. transcoded streams) fall back to the browser-idle rule.
-        const browserIdle = !bytesPerSec && video.networkState === video.NETWORK_IDLE && a >= 1;
-        enough = nearEnd || serverAhead >= bufferTarget || a >= bufferTarget || browserIdle;
+        shown = Math.max(a, isFinite(serverAhead) ? serverAhead : bufferTarget);
+        enough = nearEnd || serverAhead >= bufferTarget || a >= bufferTarget || (!bytesPerSec && browserIdle);
+
+        // A long stall on a swarm that can't keep up: move on, keeping the position.
+        const tooSlow = bytesPerSec > 0 && !st?.complete && (st?.downloadSpeed || 0) < bytesPerSec * 0.9;
+        if (!enough && tooSlow && isPlaying && Date.now() - bufferingSince.current > MAX_STALL_MS && sources.length > sourceIndex + 1) {
+          tryNextRef.current('This source can’t keep up.', true);
+          return;
+        }
       } else {
-        const browserIdle = video.networkState === video.NETWORK_IDLE && a >= 1;
         enough = nearEnd || a >= bufferTarget || browserIdle;
       }
-      setAhead(progressSecs);
+
+      setAhead(shown);
       if (enough && video.readyState >= 3) {
         setBuffering(false);
+        bufferingSince.current = 0;
         if (wantPlay.current) video.play().catch(() => setIsPlaying(false));
       }
     }, 400);
     return () => clearInterval(id);
-  }, [buffering, prepared, bufferTarget, isLive, isTorrent]);
+     
+  }, [buffering, phase, bufferTarget, isLive, magnet, isPlaying, sourceIndex, sources.length]);
 
   const onWaiting = () => {
     const video = videoRef.current;
     if (!video || isLive) return;
-    // A stall during normal playback means we started too early: ask for a bigger cushion next time.
-    if (!justSeeked.current && isPlaying) {
-      setBufferTarget((t) => Math.min(MAX_BUFFER_SECONDS, t * 2));
-    }
+    if (!justSeeked.current && isPlaying) setBufferTarget((t) => Math.min(MAX_BUFFER_SECONDS, t * 2));
     justSeeked.current = false;
     if (!video.paused) {
       autoPausing.current = true;
@@ -241,7 +396,23 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
     setBuffering(true);
   };
 
-  // 4. Subtitles
+  const onVideoError = () => {
+    if (phase !== 'ready' || isLive) {
+      if (isLive) setError('Could not play this live stream.');
+      return;
+    }
+    if (mode === 'direct') {
+      // Browser rejected the file as-is: convert it (from the same position).
+      const at = filmTime();
+      setMode('transcode');
+      setOffset(at);
+      setBuffering(true);
+      return;
+    }
+    tryNextRef.current('This file couldn’t be played.', true);
+  };
+
+  // --- 5. Subtitles ---
   useEffect(() => {
     if (!subtitleQuery?.imdbId) return;
     let cancelled = false;
@@ -268,7 +439,8 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
     };
   }, [subtitleQuery]);
 
-  // Show only the selected track.
+  const subtitleSrc = activeSub ? `${activeSub.src}&offset=${base.toFixed(2)}` : '';
+
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -281,7 +453,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
     apply();
     video.textTracks.addEventListener('addtrack', apply);
     return () => video.textTracks.removeEventListener('addtrack', apply);
-  }, [activeSub]);
+  }, [activeSub, subtitleSrc]);
 
   const chooseSubtitle = (sub: SubtitleOption | null) => {
     setActiveSub(sub);
@@ -289,29 +461,40 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
     setSubMenuOpen(false);
   };
 
-  // Controls
+  // --- Controls ---
   const togglePlay = useCallback(() => {
     const video = videoRef.current;
     if (!video) return;
-    if (video.paused && !buffering) {
-      wantPlay.current = true;
-      video.play().catch(() => {});
-    } else if (buffering) {
-      // While buffering the button just flips intent; playback starts when the buffer is ready.
+    if (buffering) {
       wantPlay.current = !wantPlay.current;
       setIsPlaying(wantPlay.current);
+    } else if (video.paused) {
+      wantPlay.current = true;
+      video.play().catch(() => {});
     } else {
       wantPlay.current = false;
       video.pause();
     }
   }, [buffering]);
 
-  const seekTo = (t: number) => {
+  const seekTo = (target: number) => {
     const video = videoRef.current;
-    if (!video || isLive) return;
+    if (!video || isLive || phase !== 'ready') return;
+    const t = Math.max(0, Math.min(duration > 0 ? duration - 1 : target, target));
     justSeeked.current = true;
-    video.currentTime = Math.max(0, Math.min(duration || t, t));
-    setCurrentTime(video.currentTime);
+    setCurrentTime(t);
+    if (mode === 'transcode') {
+      const local = t - offset;
+      const end = video.buffered.length ? video.buffered.end(video.buffered.length - 1) : 0;
+      if (local >= 0 && local <= end) {
+        video.currentTime = local; // already converted: seek inside the current stream
+      } else {
+        setOffset(t); // restart the conversion at the new position
+        setBuffering(true);
+      }
+    } else {
+      video.currentTime = t;
+    }
   };
 
   const toggleMute = useCallback(() => {
@@ -342,7 +525,6 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
-      const video = videoRef.current;
       revealControls();
       switch (e.key.toLowerCase()) {
         case ' ':
@@ -352,11 +534,11 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
           break;
         case 'arrowleft':
           e.preventDefault();
-          if (video) seekTo(video.currentTime - 10);
+          seekTo(filmTime() - 10);
           break;
         case 'arrowright':
           e.preventDefault();
-          if (video) seekTo(video.currentTime + 10);
+          seekTo(filmTime() + 10);
           break;
         case 'f':
           toggleFullscreen();
@@ -365,7 +547,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
           toggleMute();
           break;
         case 'c':
-          if (subtitles.length) chooseSubtitle(activeSub ? null : subtitles.find((s) => matchesLanguage(s.lang, getPreferredSubtitleLang())) || subtitles[0]);
+          if (subtitles.length) chooseSubtitle(activeSub ? null : subtitles[0]);
           break;
         case 'escape':
           if (subMenuOpen) setSubMenuOpen(false);
@@ -376,24 +558,24 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [togglePlay, toggleFullscreen, toggleMute, revealControls, onClose, subtitles, activeSub, subMenuOpen, duration, isLive]);
+  }, [togglePlay, toggleFullscreen, toggleMute, revealControls, onClose, subtitles, activeSub, subMenuOpen, duration, isLive, mode, offset, phase]);
 
-  // Derived status for the overlay
+  // --- Overlay status ---
   const videoFiles = (prepare?.files || []).filter((f) => VIDEO_FILE.test(f.name));
   const preparingPct = prepare && prepare.headTarget > 0 ? Math.min(99, Math.round((prepare.headBytes / prepare.headTarget) * 100)) : 0;
-  const bitrate = prepare?.fileSize && duration > 0 && isFinite(duration) ? prepare.fileSize / duration : 0;
+  const bitrate = prepare?.fileSize && duration > 0 ? prepare.fileSize / duration : 0;
   const swarmTooSlow = isTorrent && !prepare?.complete && bitrate > 0 && (prepare?.downloadSpeed || 0) < bitrate * 0.9;
+  const peersLine = isTorrent && prepare && prepare.peers > 0 ? `${prepare.peers} peers · ${formatRate(prepare.downloadSpeed)}` : null;
 
   let statusText: string | null = null;
-  let statusDetail: string | null = null;
-  if (!prepared) {
+  if (phase === 'preparing') {
     statusText = !prepare || prepare.state === 'connecting' ? 'Connecting to peers…' : `Downloading the start of the video… ${preparingPct}%`;
-    if (prepare && prepare.peers > 0) statusDetail = `${prepare.peers} peers · ${formatRate(prepare.downloadSpeed)}`;
+  } else if (phase === 'probing') {
+    statusText = 'Preparing video…';
   } else if (buffering) {
     statusText = isLive ? 'Connecting…' : `Buffering… ${Math.min(Math.floor(ahead), bufferTarget)} / ${bufferTarget}s`;
-    if (isTorrent && prepare) statusDetail = `${prepare.peers} peers · ${formatRate(prepare.downloadSpeed)}`;
   }
-
+  const canSkipSource = sources.length > sourceIndex + 1;
   const controlsVisible = showControls || !isPlaying || buffering || subMenuOpen;
 
   return (
@@ -409,16 +591,26 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
         playsInline
         onClick={togglePlay}
         onDoubleClick={toggleFullscreen}
-        onLoadedMetadata={(e) => setDuration(e.currentTarget.duration || 0)}
-        onDurationChange={(e) => setDuration(e.currentTarget.duration || 0)}
+        onLoadedMetadata={(e) => {
+          const v = e.currentTarget;
+          if (isFinite(v.duration)) setMediaDuration(v.duration);
+          if (mode === 'direct' && resumeAt.current > 0) {
+            v.currentTime = resumeAt.current;
+            resumeAt.current = 0;
+          }
+        }}
+        onDurationChange={(e) => {
+          const d = e.currentTarget.duration;
+          if (isFinite(d)) setMediaDuration(d);
+        }}
         onTimeUpdate={(e) => {
           const v = e.currentTarget;
-          setCurrentTime(v.currentTime);
-          if (v.buffered.length) setBufferedEnd(v.buffered.end(v.buffered.length - 1));
+          setCurrentTime(base + v.currentTime);
+          if (v.buffered.length) setBufferedEnd(base + v.buffered.end(v.buffered.length - 1));
         }}
         onProgress={(e) => {
           const v = e.currentTarget;
-          if (v.buffered.length) setBufferedEnd(v.buffered.end(v.buffered.length - 1));
+          if (v.buffered.length) setBufferedEnd(base + v.buffered.end(v.buffered.length - 1));
         }}
         onWaiting={onWaiting}
         onSeeking={() => {
@@ -435,33 +627,43 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
           else setIsPlaying(false);
         }}
         onEnded={() => setIsPlaying(false)}
-        onError={() => {
-          // Browsers can't play some containers/codecs; retry once through the FFmpeg remuxer.
-          if (isTorrent && !transcode) {
-            setTranscode(true);
-            setBuffering(true);
-            return;
-          }
-          setError('This video format can’t be played in your browser. Try another source.');
-        }}
+        onError={onVideoError}
       >
         {activeSub && (
-          <track key={activeSub.id} kind="subtitles" src={activeSub.src} srcLang={activeSub.lang} label={activeSub.label} default />
+          <track key={`${activeSub.id}-${base}`} kind="subtitles" src={subtitleSrc} srcLang={activeSub.lang} label={activeSub.label} default />
         )}
       </video>
 
       {/* Status overlay */}
       {statusText && !error && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/50 pointer-events-none">
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/50">
           <div className="w-12 h-12 rounded-full border-4 border-white/15 border-t-rose-500 animate-spin" />
           <p className="text-white text-sm font-semibold">{statusText}</p>
-          {statusDetail && <p className="text-xs text-zinc-400">{statusDetail}</p>}
-          {swarmTooSlow && buffering && prepared && (
+          {peersLine && <p className="text-xs text-zinc-400">{peersLine}</p>}
+          {phase === 'ready' && buffering && mode === 'transcode' && reencoding && (
+            <p className="text-xs text-zinc-500">Converting this video for your browser</p>
+          )}
+          {swarmTooSlow && buffering && phase === 'ready' && (
             <p className="max-w-sm text-center text-xs text-amber-300/90 px-4">
               This source downloads slower than it plays ({formatRate(prepare?.downloadSpeed || 0)} vs {formatRate(bitrate)} needed).
-              Playback will pause to buffer; a source with more seeds will be smoother.
             </p>
           )}
+          {canSkipSource && (
+            <button
+              onClick={() => tryNextSource('Skipped.', phase === 'ready')}
+              className="mt-1 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-xs font-semibold text-white"
+            >
+              <SkipForward className="w-3.5 h-3.5" />
+              Try another source
+            </button>
+          )}
+          {sources.length > 1 && <p className="text-[11px] text-zinc-500">Source {sourceIndex + 1} of {sources.length}</p>}
+        </div>
+      )}
+
+      {notice && !error && (
+        <div className="absolute top-20 left-1/2 -translate-x-1/2 max-w-md px-4 py-2.5 rounded-xl bg-zinc-900/95 border border-zinc-700 text-xs text-zinc-200 shadow-xl text-center">
+          {notice}
         </div>
       )}
 
@@ -483,11 +685,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
           controlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
       >
-        <button
-          onClick={onClose}
-          aria-label="Close player"
-          className="p-2.5 rounded-full bg-zinc-900/80 hover:bg-zinc-800 text-white border border-zinc-700/60"
-        >
+        <button onClick={onClose} aria-label="Close player" className="p-2.5 rounded-full bg-zinc-900/80 hover:bg-zinc-800 text-white border border-zinc-700/60">
           <X className="w-5 h-5" />
         </button>
         <h1 className="text-base sm:text-lg font-semibold text-white truncate">{title}</h1>
@@ -503,7 +701,10 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
           <div className="relative h-4 flex items-center">
             <div className="absolute inset-x-0 h-1 rounded-full bg-white/15" />
             {duration > 0 && (
-              <div className="absolute left-0 h-1 rounded-full bg-white/35" style={{ width: `${Math.min(100, (bufferedEnd / duration) * 100)}%` }} />
+              <div
+                className="absolute h-1 rounded-full bg-white/35"
+                style={{ left: `${(base / duration) * 100}%`, width: `${Math.max(0, Math.min(100, ((bufferedEnd - base) / duration) * 100))}%` }}
+              />
             )}
             <input
               type="range"
@@ -532,7 +733,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
               </button>
             </>
           )}
-          <div className="flex items-center gap-1 group/vol">
+          <div className="flex items-center gap-1">
             <button onClick={toggleMute} aria-label={muted ? 'Unmute' : 'Mute'} className="p-2 text-zinc-300 hover:text-white">
               {muted || volume === 0 ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
             </button>
@@ -564,11 +765,9 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
               <select
                 value={fileIndex ?? ''}
                 onChange={(e) => {
-                  setFileIndex(parseInt(e.target.value, 10));
-                  setPrepared(false);
-                  setTranscode(false);
-                  setBuffering(true);
-                  setBufferTarget(START_BUFFER_SECONDS);
+                  resumeAt.current = 0;
+                  setFileOverride(parseInt(e.target.value, 10));
+                  resetPipeline(true);
                 }}
                 aria-label="File"
                 className="max-w-[10rem] sm:max-w-xs bg-zinc-900/90 border border-zinc-700 text-xs text-zinc-200 rounded-lg px-2 py-1.5"
