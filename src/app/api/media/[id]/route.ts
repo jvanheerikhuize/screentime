@@ -3,7 +3,6 @@ import { tmdbService } from '@/lib/metadata/tmdb';
 import { getStreamsForMedia } from '@/lib/streaming/streamSources';
 import { stremioScraper } from '@/lib/scrapers/stremioAddons';
 import { selfHostedAggregator } from '@/lib/scrapers/selfHostedAggregator';
-import { internetArchiveService, isArchiveId } from '@/lib/metadata/internetArchive';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -27,15 +26,6 @@ export async function GET(
   const jackettApiKey = searchParams.get('jackettApiKey') || process.env.JACKETT_API_KEY;
 
   try {
-    // Internet Archive titles carry their own direct HTTP streams and have no IMDb id to scrape with.
-    if (isArchiveId(id)) {
-      const item = await internetArchiveService.getItem(id);
-      if (!item) {
-        return NextResponse.json({ error: 'Media not found' }, { status: 404 });
-      }
-      return NextResponse.json({ ...item.details, streams: item.streams });
-    }
-
     const details = await tmdbService.getDetails(id, type);
     // Built-in open-movie streams are keyed by TMDB id.
     const staticStreams = getStreamsForMedia(id).length

@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { tmdbService, FEATURED_HERO, SAMPLE_MEDIA_CATALOG } from '@/lib/metadata/tmdb';
 import { cinemetaService } from '@/lib/metadata/cinemeta';
-import { internetArchiveService } from '@/lib/metadata/internetArchive';
 import { MediaItem } from '@/types';
 
 export const runtime = 'nodejs';
@@ -28,14 +27,13 @@ const GENRE_ROWS: { genre: string; mediaType: 'movie' | 'tv'; title: string; sub
 const ROW_LIMIT = 40;
 
 export async function GET() {
-  const [tmdbTrending, popularMovies, popularSeries, topMovies, topSeries, publicDomain, ...genreResults] =
+  const [tmdbTrending, popularMovies, popularSeries, topMovies, topSeries, ...genreResults] =
     await Promise.all([
       tmdbService.getTrending('all', 'week').catch(() => []),
       cinemetaService.getCatalog('movie', { catalog: 'top' }).catch(() => []),
       cinemetaService.getCatalog('tv', { catalog: 'top' }).catch(() => []),
       cinemetaService.getHighlyRated('movie').catch(() => []),
       cinemetaService.getHighlyRated('tv').catch(() => []),
-      internetArchiveService.getFeatureFilms({ rows: ROW_LIMIT }).catch(() => []),
       ...GENRE_ROWS.map((r) => cinemetaService.getCatalog(r.mediaType, { catalog: 'top', genre: r.genre }).catch(() => [])),
     ]);
 
@@ -58,12 +56,6 @@ export async function GET() {
     { key: 'popular-series', title: 'Popular Series', subtitle: 'The most-watched shows right now', items: series.slice(0, ROW_LIMIT) },
     { key: 'top-movies', title: 'Highly Rated Movies', subtitle: 'Best-reviewed popular films (IMDb 7.5+)', items: topMovies.slice(0, ROW_LIMIT) },
     { key: 'top-series', title: 'Highly Rated Series', subtitle: 'Best-reviewed popular shows (IMDb 7.5+)', items: topSeries.slice(0, ROW_LIMIT) },
-    {
-      key: 'public-domain',
-      title: 'Free & Public Domain',
-      subtitle: 'Classic films streamed directly from the Internet Archive',
-      items: publicDomain,
-    },
     ...GENRE_ROWS.map((r, i) => ({
       key: `genre-${r.mediaType}-${r.genre.toLowerCase()}`,
       title: r.title,

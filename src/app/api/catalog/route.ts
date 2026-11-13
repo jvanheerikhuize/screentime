@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cinemetaService, CinemetaCatalog, CINEMETA_GENRES } from '@/lib/metadata/cinemeta';
-import { internetArchiveService } from '@/lib/metadata/internetArchive';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -11,17 +10,9 @@ const CATALOGS: CinemetaCatalog[] = ['top', 'year'];
  * Paginated browsing for the Movies / Series tabs.
  *   GET /api/catalog?type=movie|tv&catalog=top&genre=Action&skip=50
  *   GET /api/catalog?type=movie|tv&catalog=year&genre=2024&skip=50
- *   GET /api/catalog?source=archive&page=2
  */
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
-  const source = searchParams.get('source');
-
-  if (source === 'archive') {
-    const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10) || 1);
-    const items = await internetArchiveService.getFeatureFilms({ rows: 50, page });
-    return NextResponse.json({ items, hasMore: items.length === 50, genres: [] });
-  }
 
   const type = searchParams.get('type') === 'tv' ? 'tv' : 'movie';
   const catalogParam = searchParams.get('catalog') as CinemetaCatalog;

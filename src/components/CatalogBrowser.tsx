@@ -4,7 +4,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Film, Loader2, Star } from 'lucide-react';
 import { MediaItem } from '@/types';
 
-type BrowseSource = 'top' | 'year' | 'archive';
+type BrowseSource = 'top' | 'year';
 
 interface CatalogBrowserProps {
   mediaType: 'movie' | 'tv';
@@ -29,15 +29,10 @@ async function fetchPage(
   pageIndex: number
 ): Promise<{ items: MediaItem[]; hasMore: boolean }> {
   const params = new URLSearchParams();
-  if (source === 'archive') {
-    params.set('source', 'archive');
-    params.set('page', String(pageIndex + 1));
-  } else {
-    params.set('type', mediaType);
-    params.set('catalog', source);
-    params.set('skip', String(pageIndex * CINEMETA_PAGE));
-    if (genre) params.set('genre', genre);
-  }
+  params.set('type', mediaType);
+  params.set('catalog', source);
+  params.set('skip', String(pageIndex * CINEMETA_PAGE));
+  if (genre) params.set('genre', genre);
   const res = await fetch(`/api/catalog?${params.toString()}`);
   const data = await res.json();
   return { items: data.items || [], hasMore: Boolean(data.hasMore) };
@@ -56,7 +51,6 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({ mediaType, onSel
   const sources: { key: BrowseSource; label: string }[] = [
     { key: 'top', label: 'Popular' },
     { key: 'year', label: 'By Year' },
-    ...(mediaType === 'movie' ? [{ key: 'archive' as const, label: 'Free & Public Domain' }] : []),
   ];
 
   // First page for the current filter.
@@ -115,8 +109,8 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({ mediaType, onSel
 
   return (
     <div className="space-y-5">
-      {/* Source tabs */}
-      <div className="flex flex-wrap gap-2">
+      {/* Popular / By Year, plus the year picker */}
+      <div className="flex flex-wrap items-center gap-2">
         {sources.map((s) => (
           <button
             key={s.key}
@@ -130,12 +124,26 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({ mediaType, onSel
             {s.label}
           </button>
         ))}
+        {source === 'year' && (
+          <select
+            value={genre ?? String(CURRENT_YEAR)}
+            onChange={(e) => changeFilter('year', e.target.value)}
+            aria-label="Year"
+            className="bg-zinc-900 border border-zinc-800 text-sm text-white rounded-xl px-3 py-2 focus:outline-none focus:border-rose-500"
+          >
+            {YEARS.map((y) => (
+              <option key={y} value={y}>
+                {y}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
 
-      {/* Genre chips for Popular, year chips for By Year (Cinemeta catalogs only) */}
-      {source !== 'archive' && (
-        <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
-          {(source === 'year' ? YEARS : [null, ...GENRES]).map((g) => (
+      {/* Genre chips wrap onto extra lines instead of scrolling */}
+      {source === 'top' && (
+        <div className="flex flex-wrap gap-2">
+          {[null, ...GENRES].map((g) => (
             <button
               key={g ?? 'all'}
               onClick={() => changeFilter(source, g)}

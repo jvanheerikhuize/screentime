@@ -18,12 +18,12 @@ export const OPEN_SOURCE_STREAMS: Record<string | number, StreamSource[]> = {
     },
     {
       id: 'src-cosmos-direct',
-      name: 'Cosmos Laundromat (Internet Archive MP4)',
+      name: 'Cosmos Laundromat (MP4)',
       title: 'Cosmos Laundromat Direct Fast Stream',
       url: 'https://archive.org/download/cosmos-laundromat-first-cycle/Cosmos%20Laundromat%20-%20First%20Cycle.mp4',
       quality: '720p',
       size: '204 MB',
-      provider: 'Internet Archive',
+      provider: 'Blender Open Movie',
       type: 'direct',
     }
   ],
@@ -48,7 +48,7 @@ export const OPEN_SOURCE_STREAMS: Record<string | number, StreamSource[]> = {
       url: 'https://archive.org/download/BigBuckBunny_124/Content/big_buck_bunny_720p_surround.mp4',
       quality: '720p',
       size: '59 MB',
-      provider: 'Internet Archive',
+      provider: 'Blender Open Movie',
       type: 'direct',
     }
   ],
@@ -73,7 +73,7 @@ export const OPEN_SOURCE_STREAMS: Record<string | number, StreamSource[]> = {
       url: 'https://archive.org/download/tearsofsteelblendervfxopenmovie800p/Tears%20of%20Steel%20-%20Blender%20VFX%20Open%20Movie%20800p.mp4',
       quality: '720p',
       size: '236 MB',
-      provider: 'Internet Archive',
+      provider: 'Blender Open Movie',
       type: 'direct',
     }
   ],
@@ -98,7 +98,7 @@ export const OPEN_SOURCE_STREAMS: Record<string | number, StreamSource[]> = {
       url: 'https://archive.org/download/Sintel/sintel-2048-surround.mp4',
       quality: '1080p',
       size: '296 MB',
-      provider: 'Internet Archive',
+      provider: 'Blender Open Movie',
       type: 'direct',
     }
   ],
