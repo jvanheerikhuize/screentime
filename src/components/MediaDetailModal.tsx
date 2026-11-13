@@ -6,6 +6,7 @@ import { MediaItem, StreamSource } from '@/types';
 import { Modal } from './Modal';
 import { rankSources } from '@/lib/streaming/pickSource';
 import type { ShowStatus } from '@/lib/metadata/tvmaze';
+import { cleanAddonUrls, isDefaultAddonList } from '@/lib/scrapers/stremioAddons';
 
 function formatAirDate(airstamp?: string): string {
   if (!airstamp) return '';
@@ -42,6 +43,8 @@ function buildMediaUrl(media: MediaItem, season: number, episode: number): strin
     if (parsed.jackettEnabled && parsed.jackettUrl && parsed.jackettApiKey) {
       url += `&jackettUrl=${encodeURIComponent(parsed.jackettUrl)}&jackettApiKey=${encodeURIComponent(parsed.jackettApiKey)}`;
     }
+    const addons = cleanAddonUrls(parsed.addonUrls);
+    if (!isDefaultAddonList(addons)) url += `&addons=${encodeURIComponent(addons.join(','))}`;
   } catch {
     // no saved settings
   }

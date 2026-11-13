@@ -113,11 +113,8 @@ export interface SubtitleTrack {
 }
 
 export interface UserSettings {
-  tmdbApiKey: string;
-  autoTranscode: boolean;
   defaultSubtitleLang: string;
-  maxPeers: number;
-  hardwareAcceleration: boolean;
+  /** Stremio stream addons queried for every title. */
   addonUrls: string[];
   // Self-Hosted Index Aggregators (Prowlarr / Jackett)
   prowlarrEnabled?: boolean;

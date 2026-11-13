@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { tmdbService } from '@/lib/metadata/tmdb';
 import { getStreamsForMedia } from '@/lib/streaming/streamSources';
-import { stremioScraper } from '@/lib/scrapers/stremioAddons';
+import { StremioAddonScraper, stremioScraper } from '@/lib/scrapers/stremioAddons';
 import { selfHostedAggregator } from '@/lib/scrapers/selfHostedAggregator';
 import { getTrackers } from '@/lib/streaming/trackers';
 
@@ -25,6 +25,9 @@ export async function GET(
   const prowlarrApiKey = searchParams.get('prowlarrApiKey') || process.env.PROWLARR_API_KEY;
   const jackettUrl = searchParams.get('jackettUrl') || process.env.JACKETT_URL;
   const jackettApiKey = searchParams.get('jackettApiKey') || process.env.JACKETT_API_KEY;
+  // Stremio addons chosen in Settings (comma-separated); the built-in defaults otherwise.
+  const addons = searchParams.get('addons');
+  const addonScraper = addons ? new StremioAddonScraper(addons.split(',')) : stremioScraper;
 
   try {
     // Details and the live tracker list (used in every magnet we build) in parallel.
@@ -52,7 +55,7 @@ export async function GET(
     // 1. Stremio addons (Torrentio, MediaFusion by default)
     if (imdbId || kitsuId) {
       fetchTasks.push(
-        stremioScraper.fetchStreams({
+        addonScraper.fetchStreams({
           imdbId,
           kitsuId,
           tmdbId: id,
