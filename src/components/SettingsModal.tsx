@@ -2,11 +2,11 @@
 
 import React, { useState, useEffect } from 'react';
 import {
-  X, SlidersHorizontal, Key, Check, Zap, Globe, Plus, Trash2,
+  X, SlidersHorizontal, Key, Check, Globe, Plus, Trash2,
   Server, RefreshCw, CheckCircle2, AlertCircle
 } from 'lucide-react';
 import { UserSettings } from '@/types';
-import { DEFAULT_ADDON_URLS } from '@/lib/scrapers/stremioAddons';
+import { DEFAULT_ADDON_URLS, cleanAddonUrls } from '@/lib/scrapers/stremioAddons';
 import { Modal } from './Modal';
 import { setPreferredSubtitleLang } from '@/lib/subtitleLanguages';
 
@@ -24,7 +24,6 @@ interface SettingsModalProps {
 export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   const [settings, setSettings] = useState<UserSettings>({
     tmdbApiKey: '',
-    realDebridToken: '',
     autoTranscode: true,
     defaultSubtitleLang: 'en',
     maxPeers: 60,
@@ -52,11 +51,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
     const local = localStorage.getItem('screentime_settings');
     if (local) {
       try {
-        const parsed = JSON.parse(local);
-        setSettings({
-          ...parsed,
-          addonUrls: parsed.addonUrls && parsed.addonUrls.length > 0 ? parsed.addonUrls : DEFAULT_ADDON_URLS,
-        });
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { realDebridToken, ...parsed } = JSON.parse(local); // paid debrid support was removed
+        setSettings((prev) => ({ ...prev, ...parsed, addonUrls: cleanAddonUrls(parsed.addonUrls) }));
       } catch (e) {
         // ignore
       }
@@ -349,32 +346,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
             </div>
           </div>
 
-          {/* 4. TMDB & RealDebrid */}
+          {/* 4. TMDB */}
           <div className="space-y-4">
             <div>
               <label className="block text-xs font-semibold text-zinc-300 mb-1 flex items-center gap-1.5">
                 <Key className="w-3.5 h-3.5 text-rose-400" />
-                TMDB API Key (Optional)
+                TMDB API key (optional, free)
               </label>
               <input
                 type="text"
                 value={settings.tmdbApiKey}
                 onChange={(e) => setSettings({ ...settings, tmdbApiKey: e.target.value })}
                 placeholder="Enter your TMDB API v3 key"
-                className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-4 py-2 text-xs sm:text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-rose-500 font-mono"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-zinc-300 mb-1 flex items-center gap-1.5">
-                <Zap className="w-3.5 h-3.5 text-amber-400" />
-                Real-Debrid / Torbox Token (Optional)
-              </label>
-              <input
-                type="password"
-                value={settings.realDebridToken}
-                onChange={(e) => setSettings({ ...settings, realDebridToken: e.target.value })}
-                placeholder="API Token for unmetered high-speed CDN streaming"
                 className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-4 py-2 text-xs sm:text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-rose-500 font-mono"
               />
             </div>

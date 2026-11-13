@@ -42,7 +42,7 @@ export async function GET(
 
     const fetchTasks: Promise<any[]>[] = [];
 
-    // 1. Stremio Addons (Torrentio, MediaFusion, KnightCrawler)
+    // 1. Stremio addons (Torrentio, MediaFusion by default)
     if (imdbId) {
       fetchTasks.push(
         stremioScraper.fetchStreams({

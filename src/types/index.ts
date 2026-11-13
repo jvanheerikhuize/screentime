@@ -97,7 +97,6 @@ export interface SubtitleTrack {
 
 export interface UserSettings {
   tmdbApiKey: string;
-  realDebridToken: string;
   autoTranscode: boolean;
   defaultSubtitleLang: string;
   maxPeers: number;

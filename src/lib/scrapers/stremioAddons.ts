@@ -3,8 +3,22 @@ import { StreamSource } from '@/types';
 export const DEFAULT_ADDON_URLS = [
   'https://torrentio.strem.fun',
   'https://mediafusion.elfhosted.com',
-  'https://knightcrawler.elfhosted.com',
 ];
+
+// Public addon instances that have shut down; dropped from saved settings too.
+const RETIRED_ADDON_HOSTS = ['knightcrawler.elfhosted.com'];
+
+/** Removes retired public instances; falls back to the defaults if nothing is left. */
+export function cleanAddonUrls(urls: string[] | undefined | null): string[] {
+  const kept = (urls || []).filter((u) => {
+    try {
+      return !RETIRED_ADDON_HOSTS.includes(new URL(u).hostname);
+    } catch {
+      return false;
+    }
+  });
+  return kept.length > 0 ? kept : DEFAULT_ADDON_URLS;
+}
 
 const DEFAULT_TRACKERS = [
   'udp://tracker.opentrackr.org:1337/announce',
@@ -55,7 +69,7 @@ export class StremioAddonScraper {
   private addonUrls: string[];
 
   constructor(customAddons?: string[]) {
-    this.addonUrls = customAddons && customAddons.length > 0 ? customAddons : DEFAULT_ADDON_URLS;
+    this.addonUrls = cleanAddonUrls(customAddons);
   }
 
   public async fetchStreams(params: {
