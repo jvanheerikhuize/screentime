@@ -58,7 +58,12 @@ export default function Home() {
   const [activeGenre, setActiveGenre] = useState<string | null>(null);
   const [rawRows, setRawRows] = useState<CatalogRow[]>([]);
   const [home, setHome] = useState<HomeData | null>(null);
-  const [taste, setTaste] = useState<TasteProfile>(() => getTasteProfile());
+  const [taste, setTaste] = useState<TasteProfile>({
+    genreScores: {},
+    favoriteGenres: [],
+    likedItems: [],
+    recentHeroIds: [],
+  });
 
   const [selectedMedia, setSelectedMedia] = useState<MediaItem | null>(null);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
