@@ -166,7 +166,14 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sourc
   // Live/HLS streams can't be probed or converted: go straight to playback.
   const skipProbe = isLive || /\.m3u8(\?|$)/i.test(directUrl);
   const phase: Phase = rawPhase === 'probing' && skipProbe ? 'ready' : rawPhase;
-  const activeUrl = mode === 'transcode' ? `/api/playback/transcode?${sourceQuery}&start=${offset.toFixed(2)}` : directUrl;
+  // Live channels whose servers block cross-origin reads are relayed through our server.
+  const [liveRelay, setLiveRelay] = useState(false);
+  const activeUrl =
+    mode === 'transcode'
+      ? `/api/playback/transcode?${sourceQuery}&start=${offset.toFixed(2)}`
+      : isLive && liveRelay && /^https?:\/\//i.test(directUrl)
+        ? `/api/live/proxy?u=${encodeURIComponent(directUrl)}`
+        : directUrl;
 
   useEffect(() => {
     sourceStartedAt.current = Date.now();
@@ -316,26 +323,41 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sourc
     if (!video || phase !== 'ready' || !activeUrl) return;
 
     let hls: Hls | null = null;
+    let stallTimer: ReturnType<typeof setTimeout> | undefined;
     if ((/\.m3u8(\?|$)/i.test(activeUrl) || isLive) && Hls.isSupported()) {
       hls = new Hls({ enableWorker: true, lowLatencyMode: true, backBufferLength: 90 });
       hls.loadSource(activeUrl);
       hls.attachMedia(video);
+      // Retry a few times, then say so instead of spinning forever (channels go off air).
+      let networkRetries = 0;
+      let mediaRetries = 0;
+      // Live channel that gets no picture within a few seconds (some servers block segments
+      // without a fatal error surfacing): retry through our relay.
+      if (isLive && !liveRelay) {
+        stallTimer = setTimeout(() => {
+          if (video.readyState < 2) setLiveRelay(true);
+        }, 10_000);
+      }
       hls.on(Hls.Events.ERROR, (_e, data) => {
         if (!data.fatal) return;
-        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls?.startLoad();
-        else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls?.recoverMediaError();
-        else setError('Could not connect to this live stream.');
+        const manifestFailed = data.details === Hls.ErrorDetails.MANIFEST_LOAD_ERROR || data.details === Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT;
+        // First network failure on a live channel: retry through our relay (usually a CORS block).
+        if (isLive && !liveRelay && data.type === Hls.ErrorTypes.NETWORK_ERROR) setLiveRelay(true);
+        else if (data.type === Hls.ErrorTypes.NETWORK_ERROR && !manifestFailed && networkRetries++ < 3) hls?.startLoad();
+        else if (data.type === Hls.ErrorTypes.MEDIA_ERROR && mediaRetries++ < 2) hls?.recoverMediaError();
+        else setError(isLive ? 'This channel is offline or not available in your region right now.' : 'Could not load this stream.');
       });
     } else {
       video.src = activeUrl;
     }
 
     return () => {
+      clearTimeout(stallTimer);
       hls?.destroy();
       video.removeAttribute('src');
       video.load();
     };
-  }, [activeUrl, isLive, phase]);
+  }, [activeUrl, isLive, phase, liveRelay]);
 
   // --- 4. Buffer gate: hold playback until enough is available ahead, then (re)start ---
   // Chrome stops fetching a paused video after a few seconds, so for torrents we ask the server

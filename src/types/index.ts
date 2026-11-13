@@ -59,7 +59,16 @@ export interface LiveChannel {
   id: string;
   name: string;
   category: 'News' | 'Space & Science' | 'Sports' | 'Documentary' | 'Music & Culture' | 'Entertainment' | 'General';
+  /** Display name, e.g. "Germany / International". */
   country: string;
+  /** ISO 3166-1 alpha-2 code when known (used for the country filter). */
+  countryCode?: string;
+  /** Hand-picked channel (artwork banner) or one from the Free-TV playlist (channel logo). */
+  source?: 'curated' | 'freetv';
+  /** Only viewable from its own country. */
+  geoBlocked?: boolean;
+  /** Not broadcasting around the clock. */
+  partTime?: boolean;
   language: string;
   logo: string;
   streamUrl: string;
