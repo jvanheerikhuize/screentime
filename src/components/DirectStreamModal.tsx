@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { X, Magnet, Play, Sparkles, Link, Zap } from 'lucide-react';
+import { Modal } from './Modal';
 
 interface DirectStreamModalProps {
   onClose: () => void;
@@ -56,15 +57,8 @@ export const DirectStreamModal: React.FC<DirectStreamModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-200">
-      <div className="relative w-full max-w-xl bg-zinc-900 border border-zinc-800 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6">
-        {/* Close */}
-        <button
-          onClick={onClose}
-          className="absolute top-4 right-4 p-2 rounded-full bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white transition-colors"
-        >
-          <X className="w-4 h-4" />
-        </button>
+    <Modal onClose={onClose} maxWidth="max-w-xl">
+      <div className="p-6 sm:p-8 space-y-6">
 
         {/* Header */}
         <div className="space-y-1">
@@ -150,6 +144,6 @@ export const DirectStreamModal: React.FC<DirectStreamModalProps> = ({
           </div>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 };
