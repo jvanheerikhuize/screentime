@@ -8,7 +8,7 @@ import {
 import { UserSettings } from '@/types';
 import { DEFAULT_ADDON_URLS, cleanAddonUrls, isDefaultAddonList } from '@/lib/scrapers/addonUrls';
 import { Modal } from './Modal';
-import { setPreferredSubtitleLang } from '@/lib/subtitleLanguages';
+import { getPreferredSubtitleLang, setPreferredSubtitleLang } from '@/lib/subtitleLanguages';
 
 const SUBTITLE_LANGUAGES: [string, string][] = [
   ['off', 'Off'], ['en', 'English'], ['nl', 'Dutch'], ['de', 'German'], ['fr', 'French'], ['es', 'Spanish'],
@@ -180,6 +180,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
       for (const key of Object.keys(DEFAULT_SETTINGS) as (keyof UserSettings)[]) {
         if (parsed[key] !== undefined) (next as unknown as Record<string, unknown>)[key] = parsed[key];
       }
+      next.defaultSubtitleLang = getPreferredSubtitleLang();
       next.addonUrls = cleanAddonUrls(parsed.addonUrls);
       // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time load from localStorage
       setSettings(next);
@@ -199,6 +200,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
     localStorage.setItem('screentime_settings', JSON.stringify(settings));
+    setPreferredSubtitleLang(settings.defaultSubtitleLang);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };

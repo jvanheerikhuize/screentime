@@ -1,5 +1,5 @@
-import { Episode, MediaItem } from '@/types';
-import { getAnimeIds } from '@/lib/metadata/animeIds';
+import type { Episode, MediaItem } from '@/types';
+import { getAnimeIds } from './animeIds.ts';
 
 /**
  * AniList (graphql.anilist.co): keyless anime catalog and metadata.

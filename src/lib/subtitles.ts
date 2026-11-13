@@ -1,4 +1,4 @@
-import { cachedJson } from '@/lib/metadata/cache';
+import { cachedJson } from './metadata/cache.ts';
 
 // Stremio's public OpenSubtitles addon: keyless, keyed by IMDb id, serves UTF-8 SRT files.
 const OPENSUBTITLES_ADDON = 'https://opensubtitles-v3.strem.io';
@@ -84,4 +84,4 @@ export function isAllowedSubtitleUrl(raw: string): boolean {
   }
 }
 
-export { srtToVtt } from './srt';
+export { srtToVtt } from './srt.ts';

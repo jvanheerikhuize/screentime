@@ -1,5 +1,5 @@
 import { StreamSource } from '@/types';
-import { buildMagnet } from '@/lib/streaming/trackers';
+import { buildMagnet, extractInfoHash } from '@/lib/streaming/trackers';
 import { XMLParser } from 'fast-xml-parser';
 import { guardedFetch } from '@/lib/net/guardedFetch';
 import { checkServiceUrl } from '@/lib/net/hosts';
@@ -101,19 +101,19 @@ export class SelfHostedAggregatorService {
         const seeds = typeof item.seeders === 'number' ? item.seeders : undefined;
         const indexer = item.indexer || 'Prowlarr Indexer';
 
-        let magnet = item.magnetUrl || '';
-        if (!magnet && item.infoHash) {
-          magnet = buildMagnet(item.infoHash, title);
-        }
+        const candidateMagnet = [item.magnetUrl, item.downloadUrl, item.guid].find(
+          (v): v is string => typeof v === 'string' && /^magnet:\?/i.test(v.trim()),
+        );
+        const infoHash = item.infoHash || (candidateMagnet ? extractInfoHash(candidateMagnet) || undefined : undefined);
+        const magnet = candidateMagnet ? candidateMagnet.trim() : infoHash ? buildMagnet(infoHash, title) : '';
 
-        if (magnet || item.downloadUrl) {
+        if (magnet) {
           results.push({
-            id: `prowlarr-${item.infoHash || item.guid || Math.random().toString(36).substring(2, 7)}`,
+            id: `prowlarr-${infoHash || item.guid || Math.random().toString(36).substring(2, 7)}`,
             name: title,
             title,
-            magnet: magnet || undefined,
-            url: item.downloadUrl || undefined,
-            infoHash: item.infoHash,
+            magnet,
+            infoHash,
             quality,
             codec,
             size: sizeStr,
@@ -185,6 +185,7 @@ export class SelfHostedAggregatorService {
         let seeds: number | undefined;
         let peers: number | undefined;
         let infoHash: string | undefined;
+        let attrMagnet: string | undefined;
 
         // Parse Torznab attributes
         const attrs = item['torznab:attr'];
@@ -197,11 +198,17 @@ export class SelfHostedAggregatorService {
             if (name === 'seeders') seeds = parseInt(val, 10);
             if (name === 'peers') peers = parseInt(val, 10);
             if (name === 'infohash') infoHash = val;
+            if (name === 'magneturl' && typeof val === 'string' && /^magnet:\?/i.test(val.trim())) {
+              attrMagnet = val.trim();
+            }
           }
         }
 
-        const enclosureUrl = item?.enclosure?.['@_url'] || item?.link || '';
-        let magnet = enclosureUrl.startsWith('magnet:') ? enclosureUrl : '';
+        const enclosureUrl = String(item?.enclosure?.['@_url'] || item?.link || item?.guid || '').trim();
+        let magnet = attrMagnet || (/^magnet:\?/i.test(enclosureUrl) ? enclosureUrl : '');
+        if (!infoHash && magnet) {
+          infoHash = extractInfoHash(magnet) || undefined;
+        }
         if (!magnet && infoHash) {
           magnet = buildMagnet(infoHash, title);
         }
@@ -209,13 +216,12 @@ export class SelfHostedAggregatorService {
         const sizeStr = size ? formatBytes(size) : item.size ? formatBytes(item.size) : undefined;
         const indexer = item['jackettindexer']?.['#text'] || item['jackettindexer'] || 'Jackett Indexer';
 
-        if (magnet || enclosureUrl) {
+        if (magnet) {
           results.push({
             id: `jackett-${infoHash || Math.random().toString(36).substring(2, 7)}`,
             name: title,
             title,
-            magnet: magnet || undefined,
-            url: enclosureUrl && !enclosureUrl.startsWith('magnet:') ? enclosureUrl : undefined,
+            magnet,
             infoHash,
             quality,
             codec,

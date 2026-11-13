@@ -1,8 +1,9 @@
 import torrentStream from 'torrent-stream';
 import path from 'path';
 import os from 'os';
+import fs from 'fs';
 import { TorrentStats, TorrentFileMeta } from '@/types';
-import { dedupe, getTrackers, magnetTrackers } from '@/lib/streaming/trackers';
+import { dedupe, extractInfoHash, getTrackers, magnetTrackers } from '@/lib/streaming/trackers';
 
 interface ManagedTorrent {
   engine: TorrentStream.TorrentEngine;
@@ -88,7 +89,27 @@ export class TorrentEngineManager {
 
   constructor() {
     this.cacheDir = path.join(os.tmpdir(), 'screentime-torrents');
+    this.sweepStaleCacheDir();
     this.startPeriodicCleanup();
+  }
+
+  private sweepStaleCacheDir() {
+    if (this.torrents.size > 0) return;
+    fs.promises.rm(this.cacheDir, { recursive: true, force: true }).catch(() => {});
+  }
+
+  private destroyAndRemove(engine: TorrentStream.TorrentEngine) {
+    try {
+      engine.destroy(() => {
+        try {
+          engine.remove(false, () => {});
+        } catch {
+          // ignore cleanup errors
+        }
+      });
+    } catch {
+      // already destroyed
+    }
   }
 
   private startPeriodicCleanup() {
@@ -100,35 +121,35 @@ export class TorrentEngineManager {
       for (const [key, torrent] of this.torrents.entries()) {
         if (now - torrent.lastAccessed > MAX_IDLE_TIME) {
           console.log(`[TorrentEngine] Cleaning up idle torrent: ${torrent.infoHash || key}`);
-          try {
-            torrent.engine.destroy(() => {});
-          } catch (e) {
-            console.error('[TorrentEngine] Error destroying engine:', e);
-          }
+          this.destroyAndRemove(torrent.engine);
           this.torrents.delete(key);
         }
       }
     }, 60 * 1000);
+    this.cleanupInterval.unref?.();
   }
 
-  public async getOrCreateEngine(magnetUri: string): Promise<ManagedTorrent> {
+  public async getOrCreateEngine(magnetUri: string, fileIndex?: number): Promise<ManagedTorrent> {
     const cleanMagnet = magnetUri.trim();
-
-    // A swarm that failed to connect gets a fresh attempt instead of failing forever.
-    const stale = this.torrents.get(cleanMagnet);
-    if (stale?.error) {
-      try {
-        stale.engine.destroy(() => {});
-      } catch {
-        // ignore
-      }
-      this.torrents.delete(cleanMagnet);
+    const key = extractInfoHash(cleanMagnet);
+    if (!key) {
+      throw new Error('Invalid magnet URI: missing valid BitTorrent infoHash.');
     }
 
-    if (this.torrents.has(cleanMagnet)) {
-      const existing = this.torrents.get(cleanMagnet)!;
+    // A swarm that failed to connect gets a fresh attempt instead of failing forever.
+    const stale = this.torrents.get(key);
+    if (stale?.error) {
+      this.destroyAndRemove(stale.engine);
+      this.torrents.delete(key);
+    }
+
+    if (this.torrents.has(key)) {
+      const existing = this.torrents.get(key)!;
       existing.lastAccessed = Date.now();
       await existing.readyPromise;
+      if (fileIndex !== undefined && !isNaN(fileIndex) && existing.files[fileIndex]) {
+        this.selectFile(cleanMagnet, fileIndex);
+      }
       return existing;
     }
 
@@ -141,7 +162,7 @@ export class TorrentEngineManager {
 
     // The magnet's own trackers plus the current public list (refreshed daily).
     const trackers = dedupe([...magnetTrackers(cleanMagnet), ...(await getTrackers())]);
-    if (this.torrents.has(cleanMagnet)) return this.getOrCreateEngine(magnetUri); // created while we awaited
+    if (this.torrents.has(key)) return this.getOrCreateEngine(magnetUri, fileIndex); // created while we awaited
     const engine = torrentStream(cleanMagnet, {
       tmp: this.cacheDir,
       trackers,
@@ -153,7 +174,7 @@ export class TorrentEngineManager {
     const managed: ManagedTorrent = {
       engine,
       magnet: cleanMagnet,
-      infoHash: '',
+      infoHash: key,
       files: [],
       selectedFile: null,
       lastAccessed: Date.now(),
@@ -170,32 +191,37 @@ export class TorrentEngineManager {
       edgeSelections: [],
     };
 
-    this.torrents.set(cleanMagnet, managed);
+    this.torrents.set(key, managed);
 
     const timeout = setTimeout(() => {
       if (managed.files.length === 0) {
         managed.error = 'Could not reach any peers for this torrent. Try a source with more seeds.';
+        this.destroyAndRemove(engine);
         rejectReady(new Error(managed.error));
       }
     }, 45000);
 
     engine.on('ready', () => {
       clearTimeout(timeout);
-      managed.infoHash = engine.infoHash;
+      managed.infoHash = engine.infoHash || key;
       managed.files = engine.files;
 
-      // Automatically identify and select the primary video file (largest video file)
-      const videoFiles = engine.files.filter((f) => {
-        const ext = path.extname(f.name).toLowerCase();
-        return VIDEO_EXTENSIONS.has(ext);
-      });
+      if (fileIndex !== undefined && !isNaN(fileIndex) && engine.files[fileIndex]) {
+        managed.selectedFile = engine.files[fileIndex];
+      } else {
+        // Automatically identify and select the primary video file (largest video file)
+        const videoFiles = engine.files.filter((f) => {
+          const ext = path.extname(f.name).toLowerCase();
+          return VIDEO_EXTENSIONS.has(ext);
+        });
 
-      if (videoFiles.length > 0) {
-        videoFiles.sort((a, b) => b.length - a.length);
-        managed.selectedFile = videoFiles[0];
-      } else if (engine.files.length > 0) {
-        const sorted = [...engine.files].sort((a, b) => b.length - a.length);
-        managed.selectedFile = sorted[0];
+        if (videoFiles.length > 0) {
+          videoFiles.sort((a, b) => b.length - a.length);
+          managed.selectedFile = videoFiles[0];
+        } else if (engine.files.length > 0) {
+          const sorted = [...engine.files].sort((a, b) => b.length - a.length);
+          managed.selectedFile = sorted[0];
+        }
       }
 
       // Deselect all by default, then select the primary file to prioritize sequential pieces
@@ -210,16 +236,7 @@ export class TorrentEngineManager {
 
     engine.on('download', () => {
       managed.lastAccessed = Date.now();
-      const now = Date.now();
-      const elapsed = (now - managed.stats.lastSampleTime) / 1000;
-      if (elapsed >= 1.5) {
-        const swarmDownloaded = swarmOf(engine)?.downloaded || 0;
-        const diff = swarmDownloaded - managed.stats.lastDownloadSample;
-        managed.stats.downloadSpeed = Math.max(0, diff / elapsed);
-        managed.stats.lastDownloadSample = swarmDownloaded;
-        managed.stats.downloaded = swarmDownloaded;
-        managed.stats.lastSampleTime = now;
-      }
+      this.sampleSpeed(managed, 1.5);
     });
 
     engine.on('error', (err: unknown) => {
@@ -231,7 +248,9 @@ export class TorrentEngineManager {
   }
 
   public getStats(magnetUri: string): TorrentStats | null {
-    const managed = this.torrents.get(magnetUri.trim());
+    const key = extractInfoHash(magnetUri);
+    if (!key) return null;
+    const managed = this.torrents.get(key);
     if (!managed) return null;
 
     const filesMeta: TorrentFileMeta[] = managed.files.map((f, i) => ({
@@ -248,7 +267,7 @@ export class TorrentEngineManager {
     const peers = swarm?.wires?.length || 0;
 
     return {
-      infoHash: managed.infoHash || '',
+      infoHash: managed.infoHash || key,
       name: managed.selectedFile?.name || 'Torrent Stream',
       totalSize: totalLength,
       downloaded,
@@ -261,17 +280,14 @@ export class TorrentEngineManager {
     };
   }
 
-  /** Stop a torrent the player no longer needs (source switched or player closed). */
+  /** Stop a torrent the player no longer needs (source switched or player closed) and remove its temp files. */
   public release(magnetUri: string): boolean {
-    const key = magnetUri.trim();
+    const key = extractInfoHash(magnetUri);
+    if (!key) return false;
     const managed = this.torrents.get(key);
     if (!managed) return false;
     this.torrents.delete(key);
-    try {
-      managed.engine.destroy(() => {});
-    } catch {
-      // already destroyed
-    }
+    this.destroyAndRemove(managed.engine);
     return true;
   }
 
@@ -302,14 +318,17 @@ export class TorrentEngineManager {
    * Starts the swarm on first call.
    */
   public getBufferStatus(magnetUri: string, fileIndex?: number, fromByte = 0): BufferStatus {
-    const key = magnetUri.trim();
+    const empty = { fileSize: 0, headBytes: 0, headTarget: 0, tailReady: false, aheadBytes: 0, complete: false, peers: 0, downloadSpeed: 0, progress: 0 };
+    const key = extractInfoHash(magnetUri);
+    if (!key) {
+      return { state: 'error', error: 'Invalid magnet URI: missing valid BitTorrent infoHash.', ...empty };
+    }
     // Only start a swarm here; a failed one is reported (not silently restarted) so the
     // player can show the error. Re-opening the player calls getOrCreateEngine, which retries.
     if (!this.torrents.has(key)) {
-      this.getOrCreateEngine(key).catch(() => {});
+      this.getOrCreateEngine(magnetUri, fileIndex).catch(() => {});
     }
     const managed = this.torrents.get(key);
-    const empty = { fileSize: 0, headBytes: 0, headTarget: 0, tailReady: false, aheadBytes: 0, complete: false, peers: 0, downloadSpeed: 0, progress: 0 };
     if (!managed) return { state: 'connecting', ...empty };
     managed.lastAccessed = Date.now();
     if (managed.error) return { state: 'error', error: managed.error, ...empty };
@@ -323,7 +342,7 @@ export class TorrentEngineManager {
     }
 
     if (fileIndex !== undefined && !isNaN(fileIndex) && managed.files[fileIndex]) {
-      this.selectFile(key, fileIndex);
+      this.selectFile(magnetUri, fileIndex);
     }
 
     const file = managed.selectedFile;
@@ -358,7 +377,7 @@ export class TorrentEngineManager {
       aheadBytes = p === startPiece ? 0 : Math.max(0, Math.min(file.length, p * pieceLength - offset) - from);
     }
 
-    this.sampleSpeed(managed);
+    this.sampleSpeed(managed, 1.0);
     const headTarget = headTargetFor(file.length);
     const complete = completed === last - first + 1;
     return {
@@ -377,11 +396,11 @@ export class TorrentEngineManager {
   }
 
   /** Refresh the download-rate estimate (the 'download' event alone leaves it stale when idle). */
-  private sampleSpeed(managed: ManagedTorrent) {
+  private sampleSpeed(managed: ManagedTorrent, minElapsedSec = 1.0) {
     const now = Date.now();
     const elapsed = (now - managed.stats.lastSampleTime) / 1000;
-    if (elapsed < 1) return;
-    const downloaded = (managed.engine.swarm as unknown as { downloaded?: number })?.downloaded || 0;
+    if (elapsed < minElapsedSec) return;
+    const downloaded = swarmOf(managed.engine)?.downloaded || 0;
     managed.stats.downloadSpeed = Math.max(0, (downloaded - managed.stats.lastDownloadSample) / elapsed);
     managed.stats.lastDownloadSample = downloaded;
     managed.stats.downloaded = downloaded;
@@ -389,7 +408,9 @@ export class TorrentEngineManager {
   }
 
   public selectFile(magnetUri: string, fileIndex: number): TorrentStream.TorrentFile | null {
-    const managed = this.torrents.get(magnetUri.trim());
+    const key = extractInfoHash(magnetUri);
+    if (!key) return null;
+    const managed = this.torrents.get(key);
     if (!managed || !managed.files[fileIndex]) return null;
 
     if (managed.selectedFile === managed.files[fileIndex]) return managed.selectedFile;

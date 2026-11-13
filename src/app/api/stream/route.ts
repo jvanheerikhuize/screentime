@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import path from 'path';
 import { Readable } from 'stream';
 import { torrentManager } from '@/lib/streaming/torrentEngine';
+import { extractInfoHash } from '@/lib/streaming/trackers';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -31,14 +32,15 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const magnet = searchParams.get('magnet');
   const fileIndex = searchParams.get('fileIndex');
-  if (!magnet) return json(400, { error: 'Missing magnet parameter' });
+  if (!magnet || !extractInfoHash(magnet)) return json(400, { error: 'Missing or invalid magnet parameter' });
 
   try {
-    const managed = await torrentManager.getOrCreateEngine(magnet);
+    const parsedIdx = fileIndex !== null ? parseInt(fileIndex, 10) : undefined;
+    const idx = parsedIdx !== undefined && !isNaN(parsedIdx) ? parsedIdx : undefined;
+    const managed = await torrentManager.getOrCreateEngine(magnet, idx);
     let file = managed.selectedFile;
-    if (fileIndex) {
-      const idx = parseInt(fileIndex, 10);
-      if (!isNaN(idx)) file = torrentManager.selectFile(magnet, idx);
+    if (idx !== undefined) {
+      file = torrentManager.selectFile(magnet, idx) || file;
     }
     if (!file) return json(404, { error: 'No streamable video file found in torrent' });
 

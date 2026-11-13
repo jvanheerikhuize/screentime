@@ -1,0 +1,50 @@
+name: Bug Report
+description: Report a playback, catalog, indexer, or UI issue in Screentime
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report! Please fill out the details below so we can reproduce the issue.
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear and concise description of the problem.
+      placeholder: Describe what went wrong...
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: How can we trigger this bug?
+      placeholder: |
+        1. Open Movie / Series / Live TV tab
+        2. Click on '...'
+        3. Select stream source '...'
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment Method
+      options:
+        - Docker / Docker Compose
+        - Local Node.js (npm run dev / npm start)
+        - Behind Reverse Proxy (Caddy / Nginx / Traefik / Cloudflare)
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Browser & OS
+      placeholder: "e.g. Firefox 135 on Ubuntu 24.04 / Safari on macOS / iOS"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Server or Browser Console Logs
+      description: Paste any relevant terminal or DevTools console output (remove any private API keys).
+      render: shell

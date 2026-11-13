@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { LIVE_CHANNELS } from '@/lib/channels/liveChannels';
 import { getFreeTvChannels } from '@/lib/channels/freeTv';
-import { guardedFetch } from '@/lib/net/guardedFetch';
+import { guardedFetch, readBoundedText } from '@/lib/net/guardedFetch';
 import { rewritePlaylist } from '@/lib/live/playlist';
 
 export const runtime = 'nodejs';
@@ -77,13 +77,17 @@ export async function GET(req: NextRequest) {
   const type = upstream.headers.get('content-type') || '';
   const looksLikePlaylist = /mpegurl/i.test(type) || /\.m3u8?(\?|$)/i.test(upstream.url || url.pathname);
   if (looksLikePlaylist) {
-    const text = await upstream.text();
-    if (text.trimStart().startsWith('#EXTM3U')) {
-      return new Response(relayPlaylist(text, upstream.url || url.toString()), {
-        headers: { 'Content-Type': 'application/vnd.apple.mpegurl', 'Cache-Control': 'no-store' },
-      });
+    try {
+      const text = await readBoundedText(upstream);
+      if (text.trimStart().startsWith('#EXTM3U')) {
+        return new Response(relayPlaylist(text, upstream.url || url.toString()), {
+          headers: { 'Content-Type': 'application/vnd.apple.mpegurl', 'Cache-Control': 'no-store' },
+        });
+      }
+      return new Response(text, { headers: { 'Content-Type': type || 'text/plain', 'Cache-Control': 'no-store' } });
+    } catch {
+      return new Response('Upstream playlist too large or unreadable', { status: 502 });
     }
-    return new Response(text, { headers: { 'Content-Type': type || 'text/plain', 'Cache-Control': 'no-store' } });
   }
 
   // Segments, keys, init files: stream straight through.

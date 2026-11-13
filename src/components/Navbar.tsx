@@ -28,6 +28,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, onSelec
   const [results, setResults] = useState<MediaItem[]>([]);
   const [searching, setSearching] = useState(false);
   const [open, setOpen] = useState(false);
+  const [failedPosters, setFailedPosters] = useState<Record<string, boolean>>({});
   const searchRef = useRef<HTMLDivElement>(null);
   const requestId = useRef(0);
 
@@ -69,8 +70,10 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, onSelec
   }, [query]);
 
   const clearSearch = () => {
+    requestId.current++;
     setQuery('');
     setResults([]);
+    setSearching(false);
     setOpen(false);
   };
 
@@ -114,9 +117,14 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, onSelec
                 type="text"
                 value={query}
                 onChange={(e) => {
-                  setQuery(e.target.value);
-                  setOpen(Boolean(e.target.value.trim()));
-                  if (!e.target.value.trim()) setResults([]);
+                  const val = e.target.value;
+                  setQuery(val);
+                  setOpen(Boolean(val.trim()));
+                  if (!val.trim()) {
+                    requestId.current++;
+                    setResults([]);
+                    setSearching(false);
+                  }
                 }}
                 onFocus={() => query.trim() && setOpen(true)}
                 onKeyDown={(e) => e.key === 'Escape' && clearSearch()}
@@ -149,8 +157,13 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, onSelec
                         }}
                         className="w-full px-3 py-2 flex items-center gap-3 text-left hover:bg-white/[0.06] transition-colors"
                       >
-                        {item.posterPath ? (
-                          <img src={item.posterPath} alt="" className="w-9 h-[54px] object-cover rounded-md bg-zinc-800 flex-shrink-0" />
+                        {item.posterPath && !failedPosters[item.posterPath] ? (
+                          <img
+                            src={item.posterPath}
+                            alt=""
+                            onError={() => setFailedPosters((prev) => ({ ...prev, [item.posterPath!]: true }))}
+                            className="w-9 h-[54px] object-cover rounded-md bg-zinc-800 flex-shrink-0"
+                          />
                         ) : (
                           <div className="w-9 h-[54px] rounded-md bg-zinc-800 flex items-center justify-center flex-shrink-0">
                             <Film className="w-4 h-4 text-zinc-600" />

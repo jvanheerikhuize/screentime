@@ -25,7 +25,6 @@ body {
     radial-gradient(1200px 600px at 15% -10%, rgba(244, 63, 94, 0.08), transparent 60%),
     radial-gradient(900px 500px at 90% -5%, rgba(251, 146, 60, 0.05), transparent 60%),
     var(--background);
-  background-attachment: fixed;
   color: var(--foreground);
   font-family: var(--font-geist-sans), system-ui, sans-serif;
 }
@@ -44,14 +43,18 @@ body {
 }
 
 /* Horizontal carousels and chip rows scroll by swipe/arrows without a visible scrollbar. */
-.no-scrollbar,
-.scrollbar-none {
+.no-scrollbar {
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
-.no-scrollbar::-webkit-scrollbar,
-.scrollbar-none::-webkit-scrollbar {
+.no-scrollbar::-webkit-scrollbar {
   display: none;
+}
+
+/* Defer off-screen carousel layout & paint work until scrolled near the viewport. */
+.carousel-row-cv {
+  content-visibility: auto;
+  contain-intrinsic-size: auto none auto 340px;
 }
 
 /* Subtitles: readable on any scene. */

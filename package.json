@@ -20,22 +20,22 @@
     "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test \"tests/**/*.test.ts\""
   },
   "dependencies": {
-    "fast-xml-parser": "^5.11.1",
+    "fast-xml-parser": "^5.12.1",
     "hls.js": "^1.7.2",
     "lucide-react": "^1.41.0",
-    "next": "16.3.4",
-    "react": "19.2.8",
-    "react-dom": "19.2.8",
+    "next": "16.4.6",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
     "torrent-stream": "^1.2.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
+    "@types/node": "^22",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/torrent-stream": "^0.0.9",
     "eslint": "^9",
-    "eslint-config-next": "16.3.4",
+    "eslint-config-next": "16.4.6",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { LIVE_CHANNELS } from '@/lib/channels/liveChannels';
 import { getFreeTvChannels } from '@/lib/channels/freeTv';
+import { guardedFetch, readBoundedText } from '@/lib/net/guardedFetch';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -12,17 +13,20 @@ const CONCURRENCY = 12;
 const cache = new Map<string, { status: Status; at: number }>();
 
 async function fetchPlaylist(url: string): Promise<{ text: string; url: string } | null> {
-  const res = await fetch(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0 Screentime/1.0' },
-    signal: AbortSignal.timeout(6000),
-    redirect: 'follow',
-    cache: 'no-store',
-  });
+  const res = await guardedFetch(
+    url,
+    {
+      headers: { 'User-Agent': 'Mozilla/5.0 Screentime/1.0' },
+      signal: AbortSignal.timeout(6000),
+      cache: 'no-store',
+    },
+    { allowPrivate: false },
+  );
   if (!res.ok) {
     res.body?.cancel().catch(() => {});
     return null;
   }
-  const text = await res.text();
+  const text = await readBoundedText(res);
   return text.trimStart().startsWith('#EXTM3U') ? { text, url: res.url || url } : null;
 }
 
@@ -31,12 +35,15 @@ const uris = (playlist: string) =>
 
 /** Asks for the first kilobyte of a media segment: playlists of dead channels often still answer. */
 async function segmentAnswers(url: string): Promise<boolean> {
-  const res = await fetch(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0 Screentime/1.0', Range: 'bytes=0-1023' },
-    signal: AbortSignal.timeout(6000),
-    redirect: 'follow',
-    cache: 'no-store',
-  });
+  const res = await guardedFetch(
+    url,
+    {
+      headers: { 'User-Agent': 'Mozilla/5.0 Screentime/1.0', Range: 'bytes=0-1023' },
+      signal: AbortSignal.timeout(6000),
+      cache: 'no-store',
+    },
+    { allowPrivate: false },
+  );
   res.body?.cancel().catch(() => {});
   return res.ok;
 }
@@ -52,7 +59,7 @@ async function check(url: string): Promise<Status> {
   let status: Status = 'offline';
   try {
     if (/\.mp4(\?|$)/i.test(url)) {
-      const res = await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(6000), redirect: 'follow' });
+      const res = await guardedFetch(url, { method: 'HEAD', signal: AbortSignal.timeout(6000) }, { allowPrivate: false });
       if (res.ok) status = 'ok';
     } else {
       const master = await fetchPlaylist(url);

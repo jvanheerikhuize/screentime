@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { torrentManager } from '@/lib/streaming/torrentEngine';
+import { extractInfoHash } from '@/lib/streaming/trackers';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -12,8 +13,8 @@ export const dynamic = 'force-dynamic';
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const magnet = searchParams.get('magnet');
-  if (!magnet) {
-    return NextResponse.json({ error: 'Missing magnet parameter' }, { status: 400 });
+  if (!magnet || !extractInfoHash(magnet)) {
+    return NextResponse.json({ error: 'Missing or invalid magnet parameter' }, { status: 400 });
   }
 
   const fileIndexParam = searchParams.get('fileIndex');

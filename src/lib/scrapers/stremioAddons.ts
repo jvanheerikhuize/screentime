@@ -66,7 +66,7 @@ export class StremioAddonScraper {
     const typePath = mediaType === 'tv' ? 'series' : 'movie';
 
     const results: StreamSource[] = [];
-    const seenHashes = new Set<string>();
+    const byHash = new Map<string, StreamSource>();
 
     await Promise.all(
       this.addonUrls.map(async (baseUrl) => {
@@ -99,13 +99,6 @@ export class StremioAddonScraper {
             const rawTitle = stream.title || stream.name || title;
             const fullDesc = `${stream.name || ''}\n${rawTitle}`;
 
-            if (stream.infoHash && seenHashes.has(stream.infoHash.toLowerCase())) {
-              continue; // deduplicate swarms across multiple addons
-            }
-            if (stream.infoHash) {
-              seenHashes.add(stream.infoHash.toLowerCase());
-            }
-
             const quality = parseQuality(fullDesc);
             const seeds = parseSeeds(fullDesc);
             const size = parseSize(fullDesc);
@@ -117,7 +110,7 @@ export class StremioAddonScraper {
               magnet = buildMagnet(stream.infoHash, firstLine || title);
             }
 
-            results.push({
+            const candidate: StreamSource = {
               id: `addon-${stream.infoHash || i}-${Math.random().toString(36).substring(2, 7)}`,
               name: firstLine || `${title} (${quality})`,
               title: rawTitle,
@@ -132,13 +125,25 @@ export class StremioAddonScraper {
               peers: seeds ? Math.round(seeds * 0.3) : undefined,
               provider: stream.name?.replace(/\n.*/, '') || 'Torrent Swarm',
               type: stream.url ? 'direct' : 'torrent',
-            });
+            };
+
+            if (stream.infoHash) {
+              const hashKey = stream.infoHash.toLowerCase();
+              const prev = byHash.get(hashKey);
+              if (!prev || (candidate.seeds ?? -1) > (prev.seeds ?? -1)) {
+                byHash.set(hashKey, candidate);
+              }
+            } else if (stream.url) {
+              results.push(candidate);
+            }
           }
         } catch {
           // unreachable, timed out or not allowed: skip this addon
         }
       })
     );
+
+    results.push(...byHash.values());
 
     // Sort: 4K -> 1080p -> 720p, then highest seed count
     const qualityWeight = { '4K': 4, '1080p': 3, '720p': 2, '480p': 1, Auto: 0 };

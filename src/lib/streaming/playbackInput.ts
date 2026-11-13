@@ -1,4 +1,5 @@
-import { isAllowedUrl } from '@/lib/net/guardedFetch';
+import { isAllowedUrl } from '../net/guardedFetch.ts';
+import { extractInfoHash } from './trackers.ts';
 
 /**
  * Resolve the media input ffmpeg/ffprobe should read for a playback request:
@@ -14,11 +15,13 @@ export async function resolvePlaybackInput(req: Request): Promise<string | null>
   const url = searchParams.get('url');
 
   if (magnet) {
+    if (!extractInfoHash(magnet)) return null;
     const self = new URL(req.url);
     const fileIndex = searchParams.get('fileIndex');
-    const qs = `magnet=${encodeURIComponent(magnet)}${fileIndex ? `&fileIndex=${encodeURIComponent(fileIndex)}` : ''}`;
-    // Loopback to this server; ffmpeg talks plain HTTP to it.
-    return `http://127.0.0.1:${self.port || (self.protocol === 'https:' ? 443 : 80)}/api/stream?${qs}`;
+    const qs = `magnet=${encodeURIComponent(magnet.trim())}${fileIndex ? `&fileIndex=${encodeURIComponent(fileIndex)}` : ''}`;
+    const localPort = process.env.SCREENTIME_INTERNAL_PORT || process.env.PORT || self.port || '3000';
+    // Loopback to this server's actual listening port; ffmpeg talks plain HTTP to it.
+    return `http://127.0.0.1:${localPort}/api/stream?${qs}`;
   }
 
   if (url) {

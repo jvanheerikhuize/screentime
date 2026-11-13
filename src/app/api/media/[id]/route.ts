@@ -15,11 +15,11 @@ export async function GET(
 ) {
   const { id } = await context.params;
   const { searchParams } = new URL(req.url);
-  const type = (searchParams.get('type') as 'movie' | 'tv') || 'movie';
+  const type = searchParams.get('type') === 'tv' ? 'tv' : 'movie';
   const seasonParam = searchParams.get('season');
   const episodeParam = searchParams.get('episode');
-  const season = seasonParam ? parseInt(seasonParam, 10) : 1;
-  const episode = episodeParam ? parseInt(episodeParam, 10) : 1;
+  const season = Math.max(1, seasonParam ? parseInt(seasonParam, 10) || 1 : 1);
+  const episode = Math.max(1, episodeParam ? parseInt(episodeParam, 10) || 1 : 1);
 
   // Self-hosted indexers: from the user's settings (sent as headers so keys stay out of
   // URLs and logs) or the server environment.
@@ -42,7 +42,9 @@ export async function GET(
         : [];
 
     const kitsuId = details?.anime?.kitsuId;
-    const imdbId = kitsuId ? undefined : searchParams.get('imdbId') || details?.imdbId;
+    const rawImdbParam = searchParams.get('imdbId')?.trim();
+    const validImdbParam = rawImdbParam && /^tt\d+$/i.test(rawImdbParam) ? rawImdbParam : undefined;
+    const imdbId = kitsuId ? undefined : validImdbParam || details?.imdbId;
     const mediaTitle = details?.title || 'Media';
     const searchQuery = details?.anime
       ? type === 'tv'

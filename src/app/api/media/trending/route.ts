@@ -81,13 +81,20 @@ export async function GET() {
   // Feature a popular movie with real artwork; fall back to the curated hero.
   const featured = movies.find((m) => m.backdropPath && m.overview && m.imdbId) || FEATURED_HERO;
 
-  return NextResponse.json({
-    featured,
-    rows,
-    trending: rows[0]?.items || SAMPLE_MEDIA_CATALOG,
-    movies,
-    series,
-  });
+  return NextResponse.json(
+    {
+      featured,
+      rows,
+      trending: rows[0]?.items || SAMPLE_MEDIA_CATALOG,
+      movies,
+      series,
+    },
+    {
+      headers: {
+        'Cache-Control': 'public, s-maxage=900, stale-while-revalidate=1800',
+      },
+    },
+  );
 }
 
 function interleave<T>(a: T[], b: T[]): T[] {

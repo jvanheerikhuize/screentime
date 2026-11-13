@@ -14,9 +14,22 @@ const LAN_ORIGINS = [
 ];
 
 const nextConfig: NextConfig = {
+  output: "standalone",
   // The dev badge sits on top of the player controls (bottom-left). Errors are still surfaced.
   devIndicators: false,
   allowedDevOrigins: LAN_ORIGINS,
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        headers: [
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          { key: "X-Frame-Options", value: "SAMEORIGIN" },
+        ],
+      },
+    ];
+  },
 };
 
 export default nextConfig;

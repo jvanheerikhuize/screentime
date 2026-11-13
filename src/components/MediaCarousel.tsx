@@ -26,7 +26,7 @@ export const MediaCarousel: React.FC<MediaCarouselProps> = ({ title, subtitle, i
   if (!items || items.length === 0) return null;
 
   return (
-    <section className="group/row">
+    <section className="group/row carousel-row-cv">
       <div className="flex items-end justify-between gap-4 mb-3">
         <div className="min-w-0">
           <h2 className="font-display text-lg sm:text-xl font-semibold text-white tracking-tight truncate">{title}</h2>

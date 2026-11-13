@@ -50,6 +50,8 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({ media, onPlay, onMoreInf
         <img
           src={media.backdropPath}
           alt=""
+          fetchPriority="high"
+          decoding="async"
           onLoad={() => setLoadedSrc(media.backdropPath!)}
           className={`absolute inset-0 w-full h-full object-cover object-[center_20%] transition-all duration-[1200ms] ease-out ${
             imageReady ? 'opacity-100 scale-100' : 'opacity-0 scale-105'

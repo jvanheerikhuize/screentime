@@ -1,4 +1,4 @@
-import { StreamSource } from '@/types';
+import type { StreamSource } from '@/types';
 
 function sizeInGb(size?: string): number | undefined {
   if (!size) return undefined;
@@ -51,8 +51,4 @@ export function streamabilityScore(source: StreamSource): number {
 
 export function rankSources(sources: StreamSource[]): StreamSource[] {
   return [...sources].sort((a, b) => streamabilityScore(b) - streamabilityScore(a));
-}
-
-export function pickBestSource(sources: StreamSource[]): StreamSource | undefined {
-  return rankSources(sources).find((s) => s.magnet || s.url);
 }

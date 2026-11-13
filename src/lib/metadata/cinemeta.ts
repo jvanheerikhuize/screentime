@@ -1,5 +1,5 @@
-import { MediaItem, Season } from '@/types';
-import { cachedJson } from './cache';
+import type { MediaItem, Season } from '@/types';
+import { cachedJson } from './cache.ts';
 
 // Cinemeta is Stremio's public IMDb-backed metadata addon. It needs no API key,
 // and every item it returns carries an IMDb id, so the stream addons can resolve it.

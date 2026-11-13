@@ -17,7 +17,6 @@ export const FEATURED_HERO: MediaItem = {
   voteCount: 9400,
   genres: ['Sci-Fi', 'Adventure', 'Action', 'Drama'],
   duration: 166,
-  trailerUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
 };
 
 export const SAMPLE_MEDIA_CATALOG: MediaItem[] = [
@@ -116,8 +115,7 @@ export const SAMPLE_MEDIA_CATALOG: MediaItem[] = [
   // Open Source & Creative Commons Originals
   {
     id: 'sample-cosmos',
-    tmdbId: 823464,
-    imdbId: 'tt4843632',
+    imdbId: 'tt4957236',
     title: 'Cosmos Laundromat',
     overview: 'On a desolate island, a suicidal sheep named Franck meets a quirky salesman who offers him the gift of a lifetime.',
     posterPath: 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=800&auto=format&fit=crop&q=80',
@@ -131,7 +129,6 @@ export const SAMPLE_MEDIA_CATALOG: MediaItem[] = [
   },
   {
     id: 'sample-bbb',
-    tmdbId: 101,
     imdbId: 'tt1254207',
     title: 'Big Buck Bunny',
     overview: 'A large and lovable rabbit deals with bullying forest creatures in this iconic open-source animated short film.',
@@ -146,8 +143,7 @@ export const SAMPLE_MEDIA_CATALOG: MediaItem[] = [
   },
   {
     id: 'sample-tos',
-    tmdbId: 102,
-    imdbId: 'tt2423320',
+    imdbId: 'tt2285752',
     title: 'Tears of Steel',
     overview: 'Set in a dystopian future Amsterdam, a group of scientists and soldiers attempt to rewrite history.',
     posterPath: 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=800&auto=format&fit=crop&q=80',
@@ -161,7 +157,6 @@ export const SAMPLE_MEDIA_CATALOG: MediaItem[] = [
   },
   {
     id: 'sample-sintel',
-    tmdbId: 103,
     imdbId: 'tt1727587',
     title: 'Sintel',
     overview: 'A lonely young woman searches for a baby dragon she befriended and nursed back to health.',
@@ -346,7 +341,9 @@ export class TMDBService {
     }
 
     try {
-      const res = await fetch(`${TMDB_BASE_URL}/trending/${mediaType}/${timeWindow}?api_key=${this.apiKey}`);
+      const res = await fetch(`${TMDB_BASE_URL}/trending/${mediaType}/${timeWindow}?api_key=${this.apiKey}`, {
+        signal: AbortSignal.timeout(10000),
+      });
       if (!res.ok) throw new Error(`TMDB error: ${res.statusText}`);
       const data: { results?: TmdbListItem[] } = await res.json();
       return this.transformTMDBList(data.results || []);
@@ -364,7 +361,9 @@ export class TMDBService {
     }
 
     try {
-      const res = await fetch(`${TMDB_BASE_URL}/search/multi?api_key=${this.apiKey}&query=${encodeURIComponent(query)}`);
+      const res = await fetch(`${TMDB_BASE_URL}/search/multi?api_key=${this.apiKey}&query=${encodeURIComponent(query)}`, {
+        signal: AbortSignal.timeout(10000),
+      });
       if (!res.ok) throw new Error(`TMDB error: ${res.statusText}`);
       const data: { results?: TmdbListItem[] } = await res.json();
       return this.transformTMDBList((data.results || []).filter((i) => i.media_type === 'movie' || i.media_type === 'tv'));
@@ -375,32 +374,44 @@ export class TMDBService {
   }
 
   public async getDetails(id: string | number, mediaType: 'movie' | 'tv' = 'movie'): Promise<MediaItem | null> {
-    const found = SAMPLE_MEDIA_CATALOG.find((m) => String(m.id) === String(id) || String(m.tmdbId) === String(id));
+    const idStr = String(id);
+    // Match explicit sample IDs ('sample-*', 'movie-*', 'tv-*') or fallback tmdbId when no API key is configured.
+    const found = SAMPLE_MEDIA_CATALOG.find(
+      (m) => String(m.id) === idStr || (!this.apiKey && m.tmdbId !== undefined && String(m.tmdbId) === idStr),
+    );
     if (found) return found;
 
     // Anime from AniList.
-    const anilist = /^al-(\d+)$/.exec(String(id));
+    const anilist = /^al-(\d+)$/.exec(idStr);
     if (anilist) return getAnimeDetails(Number(anilist[1]));
 
     // IMDb ids come from the keyless Cinemeta catalog.
-    if (/^tt\d+$/.test(String(id))) {
-      return cinemetaService.getMeta(String(id), mediaType);
+    if (/^tt\d+$/.test(idStr)) {
+      return cinemetaService.getMeta(idStr, mediaType);
     }
 
     if (!this.apiKey) return null;
 
     try {
-      const res = await fetch(`${TMDB_BASE_URL}/${mediaType}/${id}?api_key=${this.apiKey}&append_to_response=videos,credits,external_ids`);
+      const res = await fetch(
+        `${TMDB_BASE_URL}/${mediaType}/${id}?api_key=${this.apiKey}&append_to_response=videos,credits,external_ids`,
+        { signal: AbortSignal.timeout(10000) },
+      );
       if (!res.ok) return null;
       const data: TmdbDetails = await res.json();
 
       let trailerUrl = '';
       if (data.videos?.results?.length) {
         const trailer = data.videos.results.find((v) => v.type === 'Trailer' && v.site === 'YouTube') || data.videos.results[0];
-        if (trailer) trailerUrl = `https://www.youtube.com/watch?v=${trailer.key}`;
+        if (trailer?.key) trailerUrl = `https://www.youtube.com/watch?v=${trailer.key}`;
       }
 
       const imdbId = data.external_ids?.imdb_id || data.imdb_id;
+      let seasons = undefined;
+      if (mediaType === 'tv' && imdbId) {
+        const cinemeta = await cinemetaService.getMeta(imdbId, 'tv');
+        seasons = cinemeta?.seasons;
+      }
 
       return {
         id: data.id,
@@ -418,7 +429,8 @@ export class TMDBService {
         voteCount: data.vote_count || 0,
         genres: (data.genres || []).map((g) => g.name),
         duration: data.runtime || (data.episode_run_time ? data.episode_run_time[0] : undefined),
-        trailerUrl,
+        trailerUrl: trailerUrl || undefined,
+        seasons,
       };
     } catch (e) {
       console.warn('[TMDBService] Details error:', e);

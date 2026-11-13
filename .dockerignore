@@ -1,0 +1,13 @@
+node_modules
+.next
+out
+build
+coverage
+.git
+.github
+.vscode
+.claude
+*.log
+.DS_Store
+.env*
+!.env.example

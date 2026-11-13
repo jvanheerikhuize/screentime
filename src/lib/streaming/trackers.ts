@@ -86,6 +86,32 @@ export function dedupe(list: string[]): string[] {
   });
 }
 
+const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+
+function base32ToHex(b32: string): string {
+  let bits = '';
+  for (const ch of b32.toUpperCase()) {
+    const val = BASE32_ALPHABET.indexOf(ch);
+    if (val === -1) return b32.toLowerCase();
+    bits += val.toString(2).padStart(5, '0');
+  }
+  let hex = '';
+  for (let i = 0; i + 4 <= bits.length; i += 4) {
+    hex += parseInt(bits.slice(i, i + 4), 2).toString(16);
+  }
+  return hex;
+}
+
+/** Extract canonical 40-char lowercase hex infoHash from a magnet URI, or null if invalid. */
+export function extractInfoHash(magnet: string): string | null {
+  const trimmed = magnet.trim();
+  if (!/^magnet:\?/i.test(trimmed)) return null;
+  const m = /[?&]xt=urn:btih:([0-9a-fA-F]{40}|[a-zA-Z2-7]{32})(?:&|$)/i.exec(trimmed);
+  if (!m) return null;
+  const raw = m[1];
+  return raw.length === 32 ? base32ToHex(raw) : raw.toLowerCase();
+}
+
 /** Trackers embedded in a magnet link (`tr=` params). */
 export function magnetTrackers(magnet: string): string[] {
   const q = magnet.indexOf('?');

@@ -37,6 +37,7 @@ yarn-error.log*
 # AI coding-agent notes that `next dev` writes when it detects an agent
 /AGENTS.md
 /CLAUDE.md
+/.claude/
 
 # vercel
 .vercel

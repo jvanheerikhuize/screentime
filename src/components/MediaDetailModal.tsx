@@ -143,6 +143,7 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({ media: baseM
   const play = (source: StreamSource) =>
     onPlaySource([source, ...ranked.filter((s) => s !== source)].slice(0, 8), media, isSeries ? { season, episode } : {});
 
+  const [failedBackdrop, setFailedBackdrop] = useState<string | null>(null);
   const year = (media.releaseDate || media.firstAirDate)?.split('-')[0];
   const playLabel = isSeries ? (media.anime ? `Play episode ${episode}` : `Play S${season} · E${episode}`) : 'Play';
 
@@ -150,8 +151,13 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({ media: baseM
     <Modal onClose={onClose} label={media.title}>
       {/* Header */}
       <div className="relative h-56 sm:h-72 w-full overflow-hidden rounded-t-3xl bg-zinc-950">
-        {media.backdropPath ? (
-          <img src={media.backdropPath} alt="" className="w-full h-full object-cover" />
+        {media.backdropPath && failedBackdrop !== media.backdropPath ? (
+          <img
+            src={media.backdropPath}
+            alt=""
+            onError={() => setFailedBackdrop(media.backdropPath!)}
+            className="w-full h-full object-cover"
+          />
         ) : (
           <div className="w-full h-full flex items-center justify-center text-zinc-700">
             <Film className="w-12 h-12" />

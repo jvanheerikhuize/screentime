@@ -18,8 +18,6 @@ export interface ShowStatus {
   status: string; // "Running", "Ended", "To Be Determined", "In Development"
   network?: string;
   nextEpisode?: EpisodeRef;
-  previousEpisode?: EpisodeRef;
-  officialSite?: string;
 }
 
 interface TvmazeEpisode {
@@ -38,13 +36,12 @@ interface TvmazeShow {
   summary?: string | null;
   premiered?: string | null;
   genres?: string[];
-  officialSite?: string | null;
   image?: { medium?: string; original?: string } | null;
   rating?: { average?: number | null };
   externals?: { imdb?: string | null };
   network?: { name?: string } | null;
   webChannel?: { name?: string } | null;
-  _embedded?: { nextepisode?: TvmazeEpisode; previousepisode?: TvmazeEpisode };
+  _embedded?: { nextepisode?: TvmazeEpisode };
 }
 
 /** Broadcast schedule entries embed the show as `show`, streaming ones under `_embedded`. */
@@ -62,18 +59,16 @@ function stripHtml(html?: string | null): string {
   return (html || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
 }
 
-/** Status, network and next/previous episode for a series, by IMDb id. */
+/** Status, network and next episode for a series, by IMDb id. */
 export async function getShowStatus(imdbId: string): Promise<ShowStatus | null> {
   const lookup = await cachedJson<{ id?: number }>(`${TVMAZE}/lookup/shows?imdb=${encodeURIComponent(imdbId)}`);
   if (!lookup?.id) return null;
-  const show = await cachedJson<TvmazeShow>(`${TVMAZE}/shows/${lookup.id}?embed[]=nextepisode&embed[]=previousepisode`);
+  const show = await cachedJson<TvmazeShow>(`${TVMAZE}/shows/${lookup.id}?embed[]=nextepisode`);
   if (!show) return null;
   return {
     status: show.status || 'Unknown',
     network: show.network?.name || show.webChannel?.name || undefined,
     nextEpisode: toEpisodeRef(show._embedded?.nextepisode),
-    previousEpisode: toEpisodeRef(show._embedded?.previousepisode),
-    officialSite: show.officialSite || undefined,
   };
 }
 
@@ -103,7 +98,7 @@ export async function getAiringToday(limit = 30): Promise<MediaItem[]> {
       title: show.name,
       overview: stripHtml(show.summary),
       posterPath: show.image?.original || show.image?.medium || null,
-      backdropPath: null,
+      backdropPath: `https://images.metahub.space/background/medium/${imdb}/img`,
       mediaType: 'tv' as const,
       firstAirDate: show.premiered || undefined,
       voteAverage: show.rating?.average || 0,

@@ -1,6 +1,6 @@
 // Server-only (uses node:dns): import from route handlers and server libraries, not components.
 import { lookup } from 'node:dns/promises';
-import { classifyHost, isAllowedClass } from './hosts';
+import { classifyHost, isAllowedClass } from './hosts.ts';
 
 /**
  * Server-side checks for requests to user-supplied addresses. Besides the hostname
@@ -47,3 +47,33 @@ export async function guardedFetch(
 
 /** Custom stream addons on your own network are refused unless the server opts in. */
 export const ALLOW_PRIVATE_ADDONS = process.env.SCREENTIME_ALLOW_PRIVATE_ADDONS === '1';
+
+/** Read a text response up to maxBytes, aborting if the upstream body exceeds the limit. */
+export async function readBoundedText(res: Response, maxBytes = 2 * 1024 * 1024): Promise<string> {
+  const contentLength = Number(res.headers.get('content-length') || '0');
+  if (contentLength > maxBytes) {
+    res.body?.cancel().catch(() => {});
+    throw new Error('Response too large');
+  }
+  if (!res.body) return res.text();
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let total = 0;
+  let out = '';
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => {});
+        throw new Error('Response too large');
+      }
+      out += decoder.decode(value, { stream: true });
+    }
+    out += decoder.decode();
+    return out;
+  } finally {
+    reader.releaseLock();
+  }
+}

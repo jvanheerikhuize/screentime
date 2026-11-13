@@ -349,6 +349,11 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sourc
       });
     } else {
       video.src = activeUrl;
+      if (isLive && !liveRelay) {
+        stallTimer = setTimeout(() => {
+          if (video.readyState < 2) setLiveRelay(true);
+        }, 10_000);
+      }
     }
 
     return () => {
@@ -420,7 +425,10 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sourc
 
   const onVideoError = () => {
     if (phase !== 'ready' || isLive) {
-      if (isLive) setError('Could not play this live stream.');
+      if (isLive) {
+        if (!liveRelay) setLiveRelay(true);
+        else setError('Could not play this live stream.');
+      }
       return;
     }
     if (mode === 'direct') {
@@ -477,11 +485,11 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sourc
     return () => video.textTracks.removeEventListener('addtrack', apply);
   }, [activeSub, subtitleSrc]);
 
-  const chooseSubtitle = (sub: SubtitleOption | null) => {
+  const chooseSubtitle = useCallback((sub: SubtitleOption | null) => {
     setActiveSub(sub);
     setPreferredSubtitleLang(sub ? sub.lang : 'off');
     setSubMenuOpen(false);
-  };
+  }, []);
 
   // --- Controls ---
   const togglePlay = useCallback(() => {
@@ -499,25 +507,28 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sourc
     }
   }, [buffering]);
 
-  const seekTo = (target: number) => {
-    const video = videoRef.current;
-    if (!video || isLive || phase !== 'ready') return;
-    const t = Math.max(0, Math.min(duration > 0 ? duration - 1 : target, target));
-    justSeeked.current = true;
-    setCurrentTime(t);
-    if (mode === 'transcode') {
-      const local = t - offset;
-      const end = video.buffered.length ? video.buffered.end(video.buffered.length - 1) : 0;
-      if (local >= 0 && local <= end) {
-        video.currentTime = local; // already converted: seek inside the current stream
+  const seekTo = useCallback(
+    (target: number) => {
+      const video = videoRef.current;
+      if (!video || isLive || phase !== 'ready') return;
+      const t = Math.max(0, Math.min(duration > 0 ? duration - 1 : target, target));
+      justSeeked.current = true;
+      setCurrentTime(t);
+      if (mode === 'transcode') {
+        const local = t - offset;
+        const end = video.buffered.length ? video.buffered.end(video.buffered.length - 1) : 0;
+        if (local >= 0 && local <= end) {
+          video.currentTime = local; // already converted: seek inside the current stream
+        } else {
+          setOffset(t); // restart the conversion at the new position
+          setBuffering(true);
+        }
       } else {
-        setOffset(t); // restart the conversion at the new position
-        setBuffering(true);
+        video.currentTime = t;
       }
-    } else {
-      video.currentTime = t;
-    }
-  };
+    },
+    [duration, isLive, mode, offset, phase],
+  );
 
   const toggleMute = useCallback(() => {
     const video = videoRef.current;
@@ -579,8 +590,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sourc
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [togglePlay, toggleFullscreen, toggleMute, revealControls, onClose, subtitles, activeSub, subMenuOpen, duration, isLive, mode, offset, phase]);
+  }, [togglePlay, toggleFullscreen, toggleMute, revealControls, onClose, subtitles, activeSub, subMenuOpen, seekTo, chooseSubtitle]);
 
   // --- Overlay status ---
   const videoFiles = (prepare?.files || []).filter((f) => VIDEO_FILE.test(f.name));

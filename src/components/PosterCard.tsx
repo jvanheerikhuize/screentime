@@ -16,18 +16,21 @@ const yearOf = (item: MediaItem) => (item.releaseDate || item.firstAirDate)?.spl
 /** Poster with title underneath; used by carousels and browse grids. */
 export const PosterCard: React.FC<PosterCardProps> = ({ item, onSelect, onPlay, className = '' }) => {
   const [loaded, setLoaded] = useState(false);
+  const [failed, setFailed] = useState(false);
   const year = yearOf(item);
+  const showImage = Boolean(item.posterPath) && !failed;
   return (
     <div onClick={() => onSelect(item)} className={`group cursor-pointer select-none ${className}`}>
       <div className="relative aspect-[2/3] w-full overflow-hidden rounded-xl bg-zinc-900 ring-1 ring-white/[0.06] shadow-lg shadow-black/40 transition-all duration-300 group-hover:ring-white/25 group-hover:shadow-2xl group-hover:shadow-rose-950/40 group-hover:-translate-y-1">
-        {!loaded && <div className="absolute inset-0 skeleton" />}
-        {item.posterPath ? (
+        {showImage && !loaded && <div className="absolute inset-0 skeleton" />}
+        {showImage ? (
           <img
-            src={item.posterPath}
+            src={item.posterPath!}
             alt={item.title}
             loading="lazy"
+            decoding="async"
             onLoad={() => setLoaded(true)}
-            onError={() => setLoaded(true)}
+            onError={() => setFailed(true)}
             className={`w-full h-full object-cover transition-all duration-500 group-hover:scale-[1.04] ${loaded ? 'opacity-100' : 'opacity-0'}`}
           />
         ) : (

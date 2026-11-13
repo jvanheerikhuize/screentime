@@ -74,7 +74,7 @@ export default function Home() {
 
   const toPlayable = (sources: StreamSource[]): PlayableSource[] =>
     sources
-      .filter((s) => s.magnet || s.url)
+      .filter((s) => (s.type === 'torrent' ? Boolean(s.magnet) : Boolean(s.magnet || s.url)))
       .map((s) => (s.magnet ? { magnet: s.magnet, fileIdx: s.fileIdx, label: s.name } : { url: s.url, label: s.name }));
 
   const handlePlaySource = (sources: StreamSource[], media: MediaItem, context: PlaybackContext) => {

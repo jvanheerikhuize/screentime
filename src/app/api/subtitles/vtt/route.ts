@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
 import { isAllowedSubtitleUrl, srtToVtt } from '@/lib/subtitles';
+import { guardedFetch, readBoundedText } from '@/lib/net/guardedFetch';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -14,9 +15,9 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(15000), cache: 'no-store' });
+    const res = await guardedFetch(url, { signal: AbortSignal.timeout(15000), cache: 'no-store' }, { allowPrivate: false });
     if (!res.ok) return new Response('Subtitle download failed', { status: 502 });
-    const vtt = srtToVtt(await res.text(), offset);
+    const vtt = srtToVtt(await readBoundedText(res), offset);
     return new Response(vtt, {
       headers: {
         'Content-Type': 'text/vtt; charset=utf-8',
