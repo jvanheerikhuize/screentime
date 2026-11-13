@@ -1,10 +1,21 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { Play, Star, Film, ChevronDown, Loader2, Users, HardDrive } from 'lucide-react';
+import { Play, Star, Film, ChevronDown, Loader2, Users, HardDrive, CalendarClock } from 'lucide-react';
 import { MediaItem, StreamSource } from '@/types';
 import { Modal } from './Modal';
 import { rankSources } from '@/lib/streaming/pickSource';
+import type { ShowStatus } from '@/lib/metadata/tvmaze';
+
+function formatAirDate(airstamp?: string): string {
+  if (!airstamp) return '';
+  const d = new Date(airstamp);
+  if (isNaN(d.getTime())) return '';
+  const days = Math.round((d.getTime() - Date.now()) / 86_400_000);
+  if (days === 0) return 'today';
+  if (days === 1) return 'tomorrow';
+  return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: days > 300 ? 'numeric' : undefined });
+}
 
 export interface PlaybackContext {
   season?: number;
@@ -54,6 +65,8 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({ media: baseM
   const [season, setSeason] = useState(1);
   const [episode, setEpisode] = useState(1);
   const [showAllSources, setShowAllSources] = useState(false);
+  const [showStatus, setShowStatus] = useState<ShowStatus | null>(null);
+  const [episodeRange, setEpisodeRange] = useState<number | null>(null);
 
   // Full details (all seasons/episodes etc.) layered over the list item.
   const media: MediaItem = { ...baseMedia, ...(details || {}), id: baseMedia.id, mediaType: baseMedia.mediaType };
@@ -86,6 +99,20 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({ media: baseM
       cancelled = true;
     };
   }, [baseMedia, season, episode]);
+
+  // Series status and upcoming episode from TVmaze.
+  const statusImdb = baseMedia.mediaType === 'tv' ? baseMedia.imdbId || (/^tt\d+$/.test(String(baseMedia.id)) ? String(baseMedia.id) : '') : '';
+  useEffect(() => {
+    if (!statusImdb) return;
+    let cancelled = false;
+    fetch(`/api/tvmaze/show?imdbId=${statusImdb}`)
+      .then((r) => r.json())
+      .then((data: ShowStatus) => !cancelled && data?.status && setShowStatus(data))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [statusImdb]);
 
   const ranked = useMemo(() => rankSources(sources).filter((s) => s.magnet || s.url), [sources]);
   const best = ranked[0];
@@ -130,6 +157,25 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({ media: baseM
             )}
             {media.genres?.length > 0 && <span className="text-zinc-400">{media.genres.slice(0, 3).join(' · ')}</span>}
           </div>
+          {showStatus && (
+            <div className="mt-3 flex items-center gap-2 flex-wrap text-xs">
+              <span
+                className={`px-2.5 py-1 rounded-full font-semibold ${
+                  showStatus.status === 'Running' ? 'bg-emerald-500/15 text-emerald-300' : 'bg-white/10 text-zinc-300'
+                }`}
+              >
+                {showStatus.status === 'Running' ? 'Returning series' : showStatus.status}
+                {showStatus.network ? ` · ${showStatus.network}` : ''}
+              </span>
+              {showStatus.nextEpisode && (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/10 text-zinc-200">
+                  <CalendarClock className="w-3.5 h-3.5 text-orange-300" />
+                  Next: S{showStatus.nextEpisode.season} · E{showStatus.nextEpisode.episode}
+                  {formatAirDate(showStatus.nextEpisode.airstamp) && ` · ${formatAirDate(showStatus.nextEpisode.airstamp)}`}
+                </span>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
