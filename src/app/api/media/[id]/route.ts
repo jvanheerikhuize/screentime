@@ -3,6 +3,7 @@ import { tmdbService } from '@/lib/metadata/tmdb';
 import { getStreamsForMedia } from '@/lib/streaming/streamSources';
 import { stremioScraper } from '@/lib/scrapers/stremioAddons';
 import { selfHostedAggregator } from '@/lib/scrapers/selfHostedAggregator';
+import { getTrackers } from '@/lib/streaming/trackers';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -26,7 +27,8 @@ export async function GET(
   const jackettApiKey = searchParams.get('jackettApiKey') || process.env.JACKETT_API_KEY;
 
   try {
-    const details = await tmdbService.getDetails(id, type);
+    // Details and the live tracker list (used in every magnet we build) in parallel.
+    const [details] = await Promise.all([tmdbService.getDetails(id, type), getTrackers()]);
     // Built-in open-movie streams are keyed by TMDB id.
     const staticStreams = getStreamsForMedia(id).length
       ? getStreamsForMedia(id)

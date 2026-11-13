@@ -2,6 +2,7 @@ import torrentStream from 'torrent-stream';
 import path from 'path';
 import os from 'os';
 import { TorrentStats, TorrentFileMeta } from '@/types';
+import { dedupe, getTrackers, magnetTrackers } from '@/lib/streaming/trackers';
 
 interface ManagedTorrent {
   engine: TorrentStream.TorrentEngine;
@@ -70,16 +71,6 @@ declare global {
   var __torrentEngineManager: TorrentEngineManager | undefined;
 }
 
-const DEFAULT_TRACKERS = [
-  'udp://tracker.opentrackr.org:1337/announce',
-  'udp://open.tracker.cl:1337/announce',
-  'udp://open.demonii.com:1337/announce',
-  'udp://tracker.openbittorrent.com:80/announce',
-  'udp://tracker.torrent.eu.org:451/announce',
-  'udp://explodie.org:6969/announce',
-  'udp://tracker.coppersurfer.tk:6969/announce',
-  'http://tracker.openbittorrent.com:80/announce',
-];
 
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v', '.wmv', '.flv', '.ts']);
 
@@ -141,9 +132,12 @@ export class TorrentEngineManager {
       rejectReady = reject;
     });
 
+    // The magnet's own trackers plus the current public list (refreshed daily).
+    const trackers = dedupe([...magnetTrackers(cleanMagnet), ...(await getTrackers())]);
+    if (this.torrents.has(cleanMagnet)) return this.getOrCreateEngine(magnetUri); // created while we awaited
     const engine = torrentStream(cleanMagnet, {
       tmp: this.cacheDir,
-      trackers: DEFAULT_TRACKERS,
+      trackers,
       connections: 60,
       dht: true,
       tracker: true,

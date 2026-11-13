@@ -1,4 +1,5 @@
 import { StreamSource } from '@/types';
+import { buildMagnet } from '@/lib/streaming/trackers';
 
 export const DEFAULT_ADDON_URLS = [
   'https://torrentio.strem.fun',
@@ -20,21 +21,6 @@ export function cleanAddonUrls(urls: string[] | undefined | null): string[] {
   return kept.length > 0 ? kept : DEFAULT_ADDON_URLS;
 }
 
-const DEFAULT_TRACKERS = [
-  'udp://tracker.opentrackr.org:1337/announce',
-  'udp://open.tracker.cl:1337/announce',
-  'udp://9.rarbg.com:2810/announce',
-  'udp://tracker.openbittorrent.com:6969/announce',
-  'udp://exodus.desync.com:6969/announce',
-  'udp://tracker.torrent.eu.org:451/announce',
-  'udp://explodie.org:6969/announce',
-  'http://tracker.openbittorrent.com:80/announce',
-];
-
-function buildMagnet(infoHash: string, title: string): string {
-  const trParams = DEFAULT_TRACKERS.map((t) => `tr=${encodeURIComponent(t)}`).join('&');
-  return `magnet:?xt=urn:btih:${infoHash.toLowerCase()}&dn=${encodeURIComponent(title)}&${trParams}`;
-}
 
 function parseQuality(text: string): '4K' | '1080p' | '720p' | '480p' | 'Auto' {
   const lower = text.toLowerCase();
