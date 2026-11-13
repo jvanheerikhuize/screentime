@@ -15,7 +15,7 @@ interface MediaDetailModalProps {
 }
 
 export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
-  media,
+  media: baseMedia,
   onClose,
   onPlaySource,
   onPlayDirectMagnet,
@@ -26,6 +26,12 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
   const [selectedSeason, setSelectedSeason] = useState<number>(1);
   const [selectedEpisode, setSelectedEpisode] = useState<number>(1);
   const [filterQuality, setFilterQuality] = useState<'All' | '4K' | '1080p' | '720p'>('All');
+  // Full details (e.g. every season/episode) fetched from the media API, layered over the list item.
+  const [details, setDetails] = useState<Partial<MediaItem> | null>(null);
+
+  const media: MediaItem | null = baseMedia
+    ? { ...baseMedia, ...(details || {}), id: baseMedia.id, mediaType: baseMedia.mediaType }
+    : null;
 
   const fetchStreamSources = (seasonNum = selectedSeason, episodeNum = selectedEpisode) => {
     if (!media) return;
@@ -58,15 +64,23 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
         if (data.streams) {
           setSources(data.streams);
         }
+        if (data.title) {
+          const rest = { ...data };
+          delete rest.streams;
+          delete rest.error;
+          setDetails(rest);
+        }
       })
       .catch((err) => console.error(err))
       .finally(() => setLoading(false));
   };
 
   useEffect(() => {
-    if (!media) return;
+    // The parent keys this modal by media id, so state starts fresh for each title.
+    if (!baseMedia) return;
     fetchStreamSources(1, 1);
-  }, [media]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [baseMedia]);
 
   if (!media) return null;
 
@@ -126,10 +140,10 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
                     {media.voteAverage} / 10
                   </span>
                 )}
-                {media.releaseDate && (
+                {(media.releaseDate || media.firstAirDate) && (
                   <span className="flex items-center gap-1 text-zinc-400 text-xs">
                     <Calendar className="w-3.5 h-3.5" />
-                    {media.releaseDate.split('-')[0]}
+                    {(media.releaseDate || media.firstAirDate)!.split('-')[0]}
                   </span>
                 )}
                 {media.imdbId && (

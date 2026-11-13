@@ -9,10 +9,18 @@ import { VideoPlayerModal } from '@/components/VideoPlayerModal';
 import { DirectStreamModal } from '@/components/DirectStreamModal';
 import { SettingsModal } from '@/components/SettingsModal';
 import { LiveChannelsGrid } from '@/components/LiveChannelsGrid';
+import { CatalogBrowser } from '@/components/CatalogBrowser';
 import { MediaItem, StreamSource, LiveChannel } from '@/types';
 import { FEATURED_HERO, SAMPLE_MEDIA_CATALOG } from '@/lib/metadata/tmdb';
 import { OPEN_SOURCE_STREAMS } from '@/lib/streaming/streamSources';
-import { Sparkles, Magnet, Clapperboard, Tv, Film } from 'lucide-react';
+import { Clapperboard, Tv } from 'lucide-react';
+
+interface CatalogRow {
+  key: string;
+  title: string;
+  subtitle: string;
+  items: MediaItem[];
+}
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<'home' | 'movies' | 'tv' | 'live' | 'magnet' | 'settings'>('home');
@@ -20,6 +28,7 @@ export default function Home() {
   const [trending, setTrending] = useState<MediaItem[]>(SAMPLE_MEDIA_CATALOG);
   const [movies, setMovies] = useState<MediaItem[]>(SAMPLE_MEDIA_CATALOG.filter((m) => m.mediaType === 'movie'));
   const [series, setSeries] = useState<MediaItem[]>(SAMPLE_MEDIA_CATALOG.filter((m) => m.mediaType === 'tv'));
+  const [rows, setRows] = useState<CatalogRow[] | null>(null);
 
   // Modals state
   const [selectedMedia, setSelectedMedia] = useState<MediaItem | null>(null);
@@ -44,6 +53,7 @@ export default function Home() {
         if (data.trending) setTrending(data.trending);
         if (data.movies) setMovies(data.movies);
         if (data.series) setSeries(data.series);
+        if (Array.isArray(data.rows) && data.rows.length > 0) setRows(data.rows);
       })
       .catch((err) => console.error('Failed to load catalog:', err));
   }, []);
@@ -134,29 +144,20 @@ export default function Home() {
 
             {/* Carousels */}
             <div className="space-y-6">
-              <MediaCarousel
-                title="Trending & Popular Streams"
-                subtitle="High-speed seed swarms and open streams"
-                items={trending}
-                onSelectMedia={(item) => setSelectedMedia(item)}
-                onPlayMedia={handlePlayMedia}
-              />
-
-              <MediaCarousel
-                title="Movies & Feature Films"
-                subtitle="Blockbuster cinema, 4K sci-fi & Blender Foundation originals"
-                items={movies}
-                onSelectMedia={(item) => setSelectedMedia(item)}
-                onPlayMedia={handlePlayMedia}
-              />
-
-              <MediaCarousel
-                title="TV Series & Episodic Shows"
-                subtitle="Multi-episode releases and seasonal collections"
-                items={series}
-                onSelectMedia={(item) => setSelectedMedia(item)}
-                onPlayMedia={handlePlayMedia}
-              />
+              {(rows ?? [
+                { key: 'trending', title: 'Trending & Popular Streams', subtitle: 'High-speed seed swarms and open streams', items: trending },
+                { key: 'movies', title: 'Movies & Feature Films', subtitle: 'Blockbuster cinema, 4K sci-fi & Blender Foundation originals', items: movies },
+                { key: 'series', title: 'TV Series & Episodic Shows', subtitle: 'Multi-episode releases and seasonal collections', items: series },
+              ]).map((row) => (
+                <MediaCarousel
+                  key={row.key}
+                  title={row.title}
+                  subtitle={row.subtitle}
+                  items={row.items}
+                  onSelectMedia={(item) => setSelectedMedia(item)}
+                  onPlayMedia={handlePlayMedia}
+                />
+              ))}
             </div>
           </>
         )}
@@ -173,29 +174,7 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 pt-4">
-              {movies.map((item) => (
-                <div
-                  key={item.id}
-                  onClick={() => setSelectedMedia(item)}
-                  className="rounded-2xl overflow-hidden bg-zinc-900 border border-zinc-800 hover:border-zinc-700 transition-all duration-300 hover:shadow-2xl hover:shadow-rose-600/10 hover:-translate-y-1 cursor-pointer flex flex-col justify-between"
-                >
-                  <div className="relative aspect-[2/3] w-full bg-zinc-950">
-                    {item.posterPath ? (
-                      <img src={item.posterPath} alt={item.title} className="w-full h-full object-cover" />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-zinc-600">
-                        <Film className="w-8 h-8" />
-                      </div>
-                    )}
-                  </div>
-                  <div className="p-3">
-                    <h3 className="font-semibold text-sm text-zinc-100 truncate">{item.title}</h3>
-                    <p className="text-xs text-zinc-400 mt-1">{item.releaseDate?.split('-')[0] || '2024'}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
+            <CatalogBrowser mediaType="movie" onSelectMedia={(item) => setSelectedMedia(item)} />
           </div>
         )}
 
@@ -211,29 +190,7 @@ export default function Home() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 pt-4">
-              {series.map((item) => (
-                <div
-                  key={item.id}
-                  onClick={() => setSelectedMedia(item)}
-                  className="rounded-2xl overflow-hidden bg-zinc-900 border border-zinc-800 hover:border-zinc-700 transition-all duration-300 hover:shadow-2xl hover:shadow-rose-600/10 hover:-translate-y-1 cursor-pointer flex flex-col justify-between"
-                >
-                  <div className="relative aspect-[2/3] w-full bg-zinc-950">
-                    {item.posterPath ? (
-                      <img src={item.posterPath} alt={item.title} className="w-full h-full object-cover" />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-zinc-600">
-                        <Film className="w-8 h-8" />
-                      </div>
-                    )}
-                  </div>
-                  <div className="p-3">
-                    <h3 className="font-semibold text-sm text-zinc-100 truncate">{item.title}</h3>
-                    <p className="text-xs text-zinc-400 mt-1">{item.firstAirDate?.split('-')[0] || '2024'}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
+            <CatalogBrowser mediaType="tv" onSelectMedia={(item) => setSelectedMedia(item)} />
           </div>
         )}
 
@@ -245,6 +202,7 @@ export default function Home() {
       {/* Media Detail Modal */}
       {selectedMedia && (
         <MediaDetailModal
+          key={`${selectedMedia.mediaType}-${selectedMedia.id}`}
           media={selectedMedia}
           onClose={() => setSelectedMedia(null)}
           onPlaySource={handlePlaySource}
