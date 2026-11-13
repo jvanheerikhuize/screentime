@@ -1,3 +1,4 @@
+import type { StreamSource } from '@/types';
 import { NextRequest, NextResponse } from 'next/server';
 import { tmdbService } from '@/lib/metadata/tmdb';
 import { getStreamsForMedia } from '@/lib/streaming/streamSources';
@@ -20,11 +21,12 @@ export async function GET(
   const season = seasonParam ? parseInt(seasonParam, 10) : 1;
   const episode = episodeParam ? parseInt(episodeParam, 10) : 1;
 
-  // Self-Hosted Indexer parameters (from user settings or env)
-  const prowlarrUrl = searchParams.get('prowlarrUrl') || process.env.PROWLARR_URL;
-  const prowlarrApiKey = searchParams.get('prowlarrApiKey') || process.env.PROWLARR_API_KEY;
-  const jackettUrl = searchParams.get('jackettUrl') || process.env.JACKETT_URL;
-  const jackettApiKey = searchParams.get('jackettApiKey') || process.env.JACKETT_API_KEY;
+  // Self-hosted indexers: from the user's settings (sent as headers so keys stay out of
+  // URLs and logs) or the server environment.
+  const prowlarrUrl = req.headers.get('x-prowlarr-url') || process.env.PROWLARR_URL;
+  const prowlarrApiKey = req.headers.get('x-prowlarr-key') || process.env.PROWLARR_API_KEY;
+  const jackettUrl = req.headers.get('x-jackett-url') || process.env.JACKETT_URL;
+  const jackettApiKey = req.headers.get('x-jackett-key') || process.env.JACKETT_API_KEY;
   // Stremio addons chosen in Settings (comma-separated); the built-in defaults otherwise.
   const addons = searchParams.get('addons');
   const addonScraper = addons ? new StremioAddonScraper(addons.split(',')) : stremioScraper;
@@ -50,7 +52,7 @@ export async function GET(
       ? `${mediaTitle} S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}`
       : `${mediaTitle} ${details?.releaseDate ? details.releaseDate.split('-')[0] : ''}`.trim();
 
-    const fetchTasks: Promise<any[]>[] = [];
+    const fetchTasks: Promise<StreamSource[]>[] = [];
 
     // 1. Stremio addons (Torrentio, MediaFusion by default)
     if (imdbId || kitsuId) {
@@ -120,7 +122,7 @@ export async function GET(
       ...details,
       streams: combinedStreams,
     });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message || 'Failed to fetch media details' }, { status: 500 });
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'Failed to fetch media details' }, { status: 500 });
   }
 }

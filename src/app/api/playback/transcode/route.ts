@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic';
  * Browser-playable fragmented MP4 starting at `start`. Seeking = a new request with a new start.
  */
 export async function GET(req: NextRequest) {
-  const input = resolvePlaybackInput(req);
+  const input = await resolvePlaybackInput(req);
   if (!input) return new Response('Missing or invalid magnet/url', { status: 400 });
   const start = Math.max(0, parseFloat(new URL(req.url).searchParams.get('start') || '0') || 0);
 

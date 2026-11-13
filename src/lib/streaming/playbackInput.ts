@@ -1,9 +1,14 @@
+import { isAllowedUrl } from '@/lib/net/guardedFetch';
+
 /**
  * Resolve the media input ffmpeg/ffprobe should read for a playback request:
  *   ?magnet=...&fileIndex=N  -> our own range-capable torrent endpoint (so ffmpeg can seek)
- *   ?url=https://...         -> a direct HTTP(S) source
+ *   ?url=https://...         -> a direct HTTP(S) source on the public internet
+ *
+ * ffmpeg fetches the URL itself, so addresses on this machine or your LAN are refused
+ * (otherwise anyone who can reach the app could read internal services through it).
  */
-export function resolvePlaybackInput(req: Request): string | null {
+export async function resolvePlaybackInput(req: Request): Promise<string | null> {
   const { searchParams } = new URL(req.url);
   const magnet = searchParams.get('magnet');
   const url = searchParams.get('url');
@@ -17,12 +22,7 @@ export function resolvePlaybackInput(req: Request): string | null {
   }
 
   if (url) {
-    try {
-      const parsed = new URL(url);
-      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return parsed.toString();
-    } catch {
-      // invalid
-    }
+    if (await isAllowedUrl(url, { allowPrivate: false })) return new URL(url).toString();
   }
   return null;
 }

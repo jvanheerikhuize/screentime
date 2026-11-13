@@ -1,6 +1,30 @@
 import { StreamSource } from '@/types';
 import { buildMagnet } from '@/lib/streaming/trackers';
 import { XMLParser } from 'fast-xml-parser';
+import { guardedFetch } from '@/lib/net/guardedFetch';
+import { checkServiceUrl } from '@/lib/net/hosts';
+
+/** Prowlarr/Jackett usually run on your own network; only link-local/metadata addresses are refused. */
+const INDEXER = { allowPrivate: true };
+
+const errorMessage = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+interface ProwlarrResult {
+  title?: string;
+  size?: number;
+  seeders?: number;
+  leechers?: number;
+  indexer?: string;
+  magnetUrl?: string;
+  downloadUrl?: string;
+  infoHash?: string;
+  guid?: string;
+}
+
+interface TorznabAttr {
+  '@_name': string;
+  '@_value': string;
+}
 
 
 function parseQuality(text: string): '4K' | '1080p' | '720p' | '480p' | 'Auto' {
@@ -43,7 +67,8 @@ export class SelfHostedAggregatorService {
     const { hostUrl, apiKey, query, mediaType = 'movie' } = params;
     if (!hostUrl || !apiKey || !query.trim()) return [];
 
-    const cleanHost = hostUrl.replace(/\/+$/, '');
+    const cleanHost = checkServiceUrl(hostUrl, INDEXER);
+    if (!cleanHost) return [];
     const searchType = mediaType === 'tv' ? 'tvsearch' : 'search';
     const targetUrl = `${cleanHost}/api/v1/search?query=${encodeURIComponent(query)}&type=${searchType}&categories=2000&categories=5000`;
 
@@ -51,13 +76,11 @@ export class SelfHostedAggregatorService {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 8000);
 
-      const res = await fetch(targetUrl, {
-        headers: {
-          'X-Api-Key': apiKey,
-          Accept: 'application/json',
-        },
-        signal: controller.signal,
-      });
+      const res = await guardedFetch(
+        targetUrl,
+        { headers: { 'X-Api-Key': apiKey, Accept: 'application/json' }, signal: controller.signal },
+        INDEXER
+      );
       clearTimeout(timeoutId);
 
       if (!res.ok) {
@@ -65,12 +88,12 @@ export class SelfHostedAggregatorService {
         return [];
       }
 
-      const data = await res.json();
+      const data: unknown = await res.json();
       if (!Array.isArray(data)) return [];
 
       const results: StreamSource[] = [];
 
-      for (const item of data) {
+      for (const item of data as ProwlarrResult[]) {
         const title = item.title || query;
         const quality = parseQuality(title);
         const codec = parseCodec(title);
@@ -103,8 +126,8 @@ export class SelfHostedAggregatorService {
       }
 
       return results;
-    } catch (e: any) {
-      console.warn('[Prowlarr] Search error:', e.message);
+    } catch (e) {
+      console.warn('[Prowlarr] Search error:', errorMessage(e));
       return [];
     }
   }
@@ -121,7 +144,8 @@ export class SelfHostedAggregatorService {
     const { hostUrl, apiKey, query, imdbId } = params;
     if (!hostUrl || !apiKey || (!query.trim() && !imdbId)) return [];
 
-    const cleanHost = hostUrl.replace(/\/+$/, '');
+    const cleanHost = checkServiceUrl(hostUrl, INDEXER);
+    if (!cleanHost) return [];
     let targetUrl = `${cleanHost}/api/v2.0/indexers/all/results/torznab/api?apikey=${encodeURIComponent(apiKey)}&t=search&q=${encodeURIComponent(query)}&cat=2000,5000`;
     if (imdbId) {
       targetUrl += `&imdbid=${encodeURIComponent(imdbId)}`;
@@ -131,7 +155,7 @@ export class SelfHostedAggregatorService {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 8000);
 
-      const res = await fetch(targetUrl, { signal: controller.signal });
+      const res = await guardedFetch(targetUrl, { signal: controller.signal }, INDEXER);
       clearTimeout(timeoutId);
 
       if (!res.ok) {
@@ -165,7 +189,7 @@ export class SelfHostedAggregatorService {
         // Parse Torznab attributes
         const attrs = item['torznab:attr'];
         if (attrs) {
-          const attrList = Array.isArray(attrs) ? attrs : [attrs];
+          const attrList: TorznabAttr[] = Array.isArray(attrs) ? attrs : [attrs];
           for (const a of attrList) {
             const name = a['@_name'];
             const val = a['@_value'];
@@ -205,8 +229,8 @@ export class SelfHostedAggregatorService {
       }
 
       return results;
-    } catch (e: any) {
-      console.warn('[Jackett] Search error:', e.message);
+    } catch (e) {
+      console.warn('[Jackett] Search error:', errorMessage(e));
       return [];
     }
   }
@@ -215,26 +239,33 @@ export class SelfHostedAggregatorService {
    * Test connection to Prowlarr or Jackett instance
    */
   public async testConnection(type: 'prowlarr' | 'jackett', hostUrl: string, apiKey: string): Promise<{ success: boolean; message: string }> {
-    const cleanHost = hostUrl.replace(/\/+$/, '');
+    const cleanHost = checkServiceUrl(hostUrl, INDEXER);
+    if (!cleanHost) return { success: false, message: 'Enter an http(s) address, e.g. http://192.168.1.10:9696' };
     try {
       if (type === 'prowlarr') {
-        const res = await fetch(`${cleanHost}/api/v1/system/status`, {
-          headers: { 'X-Api-Key': apiKey },
-        });
+        const res = await guardedFetch(
+          `${cleanHost}/api/v1/system/status`,
+          { headers: { 'X-Api-Key': apiKey }, signal: AbortSignal.timeout(8000) },
+          INDEXER
+        );
         if (res.ok) {
           const data = await res.json();
           return { success: true, message: `Connected to Prowlarr v${data.version || '1.x'}` };
         }
         return { success: false, message: `Prowlarr error: HTTP ${res.status}` };
       } else {
-        const res = await fetch(`${cleanHost}/api/v2.0/indexers/all/results/torznab/api?apikey=${apiKey}&t=caps`);
+        const res = await guardedFetch(
+          `${cleanHost}/api/v2.0/indexers/all/results/torznab/api?apikey=${encodeURIComponent(apiKey)}&t=caps`,
+          { signal: AbortSignal.timeout(8000) },
+          INDEXER
+        );
         if (res.ok) {
           return { success: true, message: 'Connected to Jackett / Torznab API successfully!' };
         }
         return { success: false, message: `Jackett error: HTTP ${res.status}` };
       }
-    } catch (e: any) {
-      return { success: false, message: `Connection failed: ${e.message}` };
+    } catch {
+      return { success: false, message: 'Could not connect. Check the address and that the service is running.' };
     }
   }
 }
