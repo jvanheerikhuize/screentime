@@ -1,6 +1,8 @@
 import { NextRequest } from 'next/server';
 import { LIVE_CHANNELS } from '@/lib/channels/liveChannels';
 import { getFreeTvChannels } from '@/lib/channels/freeTv';
+import { guardedFetch } from '@/lib/net/guardedFetch';
+import { rewritePlaylist } from '@/lib/live/playlist';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -33,29 +35,13 @@ async function allowedHosts(): Promise<Set<string>> {
   return channelHosts.hosts;
 }
 
-function proxied(target: string): string {
-  return PROXY_PATH + encodeURIComponent(target);
-}
-
-function rewritePlaylist(text: string, base: string): string {
-  const abs = (ref: string) => {
-    const url = new URL(ref, base);
+/** Rewrites playlist references through the relay and remembers their hosts. */
+function relayPlaylist(text: string, base: string): string {
+  return rewritePlaylist(text, base, (url) => {
     if (learnedHosts.size > 2000) learnedHosts.clear();
-    learnedHosts.add(url.hostname);
-    return url.toString();
-  };
-  return text
-    .split(/\r?\n/)
-    .map((line) => {
-      const trimmed = line.trim();
-      if (!trimmed) return line;
-      if (trimmed.startsWith('#')) {
-        // URI="..." attributes (keys, init segments, alternate audio/subtitle renditions).
-        return line.replace(/URI="([^"]+)"/g, (_m, ref: string) => `URI="${proxied(abs(ref))}"`);
-      }
-      return proxied(abs(trimmed));
-    })
-    .join('\n');
+    learnedHosts.add(new URL(url).hostname);
+    return PROXY_PATH + encodeURIComponent(url);
+  });
 }
 
 export async function GET(req: NextRequest) {
@@ -73,12 +59,16 @@ export async function GET(req: NextRequest) {
 
   let upstream: Response;
   try {
-    upstream = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) Screentime/1.0' },
-      redirect: 'follow',
-      signal: AbortSignal.any([req.signal, AbortSignal.timeout(15000)]),
-      cache: 'no-store',
-    });
+    // Channel servers are public; redirects into this machine or the LAN are refused.
+    upstream = await guardedFetch(
+      url.toString(),
+      {
+        headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) Screentime/1.0' },
+        signal: AbortSignal.any([req.signal, AbortSignal.timeout(15000)]),
+        cache: 'no-store',
+      },
+      { allowPrivate: false }
+    );
   } catch {
     return new Response('Upstream unreachable', { status: 502 });
   }
@@ -89,7 +79,7 @@ export async function GET(req: NextRequest) {
   if (looksLikePlaylist) {
     const text = await upstream.text();
     if (text.trimStart().startsWith('#EXTM3U')) {
-      return new Response(rewritePlaylist(text, upstream.url || url.toString()), {
+      return new Response(relayPlaylist(text, upstream.url || url.toString()), {
         headers: { 'Content-Type': 'application/vnd.apple.mpegurl', 'Cache-Control': 'no-store' },
       });
     }

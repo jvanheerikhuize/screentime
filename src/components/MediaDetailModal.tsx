@@ -6,7 +6,7 @@ import { MediaItem, StreamSource } from '@/types';
 import { Modal } from './Modal';
 import { rankSources } from '@/lib/streaming/pickSource';
 import type { ShowStatus } from '@/lib/metadata/tvmaze';
-import { cleanAddonUrls, isDefaultAddonList } from '@/lib/scrapers/stremioAddons';
+import { cleanAddonUrls, isDefaultAddonList } from '@/lib/scrapers/addonUrls';
 
 function formatAirDate(airstamp?: string): string {
   if (!airstamp) return '';
@@ -30,25 +30,29 @@ interface MediaDetailModalProps {
   onPlaySource: (sources: StreamSource[], media: MediaItem, context: PlaybackContext) => void;
 }
 
-function buildMediaUrl(media: MediaItem, season: number, episode: number): string {
+/** Stream lookup request; indexer credentials travel as headers so they stay out of URLs and logs. */
+function buildMediaRequest(media: MediaItem, season: number, episode: number): { url: string; headers: Record<string, string> } {
   let url = `/api/media/${encodeURIComponent(String(media.id))}?type=${media.mediaType}`;
   if (media.imdbId) url += `&imdbId=${media.imdbId}`;
   if (media.mediaType === 'tv') url += `&season=${season}&episode=${episode}`;
+  const headers: Record<string, string> = {};
 
   try {
     const parsed = JSON.parse(localStorage.getItem('screentime_settings') || '{}');
     if (parsed.prowlarrEnabled && parsed.prowlarrUrl && parsed.prowlarrApiKey) {
-      url += `&prowlarrUrl=${encodeURIComponent(parsed.prowlarrUrl)}&prowlarrApiKey=${encodeURIComponent(parsed.prowlarrApiKey)}`;
+      headers['X-Prowlarr-Url'] = parsed.prowlarrUrl;
+      headers['X-Prowlarr-Key'] = parsed.prowlarrApiKey;
     }
     if (parsed.jackettEnabled && parsed.jackettUrl && parsed.jackettApiKey) {
-      url += `&jackettUrl=${encodeURIComponent(parsed.jackettUrl)}&jackettApiKey=${encodeURIComponent(parsed.jackettApiKey)}`;
+      headers['X-Jackett-Url'] = parsed.jackettUrl;
+      headers['X-Jackett-Key'] = parsed.jackettApiKey;
     }
     const addons = cleanAddonUrls(parsed.addonUrls);
     if (!isDefaultAddonList(addons)) url += `&addons=${encodeURIComponent(addons.join(','))}`;
   } catch {
     // no saved settings
   }
-  return url;
+  return { url, headers };
 }
 
 function sourceSummary(source: StreamSource): string {
@@ -86,7 +90,8 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({ media: baseM
 
   useEffect(() => {
     let cancelled = false;
-    fetch(buildMediaUrl(baseMedia, season, episode))
+    const request = buildMediaRequest(baseMedia, season, episode);
+    fetch(request.url, { headers: request.headers })
       .then((res) => res.json())
       .then((data) => {
         if (cancelled) return;

@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic';
  * Tells the player the real duration and whether the file can play directly or needs converting.
  */
 export async function GET(req: NextRequest) {
-  const input = resolvePlaybackInput(req);
+  const input = await resolvePlaybackInput(req);
   if (!input) return NextResponse.json({ error: 'Missing or invalid magnet/url' }, { status: 400 });
 
   try {

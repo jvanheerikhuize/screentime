@@ -1,38 +1,7 @@
 import { StreamSource } from '@/types';
 import { buildMagnet } from '@/lib/streaming/trackers';
-
-export const DEFAULT_ADDON_URLS = [
-  'https://torrentio.strem.fun',
-  'https://mediafusion.elfhosted.com',
-];
-
-// Public addon instances that have shut down; dropped from saved settings too.
-const RETIRED_ADDON_HOSTS = ['knightcrawler.elfhosted.com'];
-
-/**
- * Keeps valid http(s) addon URLs (max 10, without trailing slashes or /manifest.json) and
- * drops retired public instances; falls back to the defaults if nothing is left.
- */
-export function cleanAddonUrls(urls: string[] | undefined | null): string[] {
-  const kept: string[] = [];
-  for (const raw of urls || []) {
-    try {
-      const url = new URL(raw.trim());
-      if (!/^https?:$/.test(url.protocol) || RETIRED_ADDON_HOSTS.includes(url.hostname)) continue;
-      const clean = url.toString().replace(/\/manifest\.json$/, '').replace(/\/+$/, '');
-      if (!kept.includes(clean)) kept.push(clean);
-    } catch {
-      // not a URL
-    }
-  }
-  return kept.length > 0 ? kept.slice(0, 10) : DEFAULT_ADDON_URLS;
-}
-
-/** True when the list is just the built-in defaults (so it needn't be sent to the server). */
-export function isDefaultAddonList(urls: string[]): boolean {
-  return urls.length === DEFAULT_ADDON_URLS.length && urls.every((u, i) => u === DEFAULT_ADDON_URLS[i]);
-}
-
+import { cleanAddonUrls } from '@/lib/scrapers/addonUrls';
+import { ALLOW_PRIVATE_ADDONS, guardedFetch } from '@/lib/net/guardedFetch';
 
 function parseQuality(text: string): '4K' | '1080p' | '720p' | '480p' | 'Auto' {
   const lower = text.toLowerCase();
@@ -108,12 +77,16 @@ export class StremioAddonScraper {
           const controller = new AbortController();
           const timeoutId = setTimeout(() => controller.abort(), 7000);
 
-          const res = await fetch(targetUrl, {
-            signal: controller.signal,
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Screentime/1.0',
+          // Addresses are re-checked on every request (and redirect): addons must be public
+          // unless the server opts in with SCREENTIME_ALLOW_PRIVATE_ADDONS=1.
+          const res = await guardedFetch(
+            targetUrl,
+            {
+              signal: controller.signal,
+              headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Screentime/1.0' },
             },
-          });
+            { allowPrivate: ALLOW_PRIVATE_ADDONS }
+          );
           clearTimeout(timeoutId);
 
           if (!res.ok) return;
@@ -161,8 +134,8 @@ export class StremioAddonScraper {
               type: stream.url ? 'direct' : 'torrent',
             });
           }
-        } catch (err: any) {
-          // silently continue
+        } catch {
+          // unreachable, timed out or not allowed: skip this addon
         }
       })
     );

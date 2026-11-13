@@ -22,8 +22,38 @@ export interface ShowStatus {
   officialSite?: string;
 }
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-function toEpisodeRef(ep: any): EpisodeRef | undefined {
+interface TvmazeEpisode {
+  season?: number;
+  number?: number | null;
+  name?: string;
+  airstamp?: string;
+}
+
+interface TvmazeShow {
+  id: number;
+  name: string;
+  type?: string;
+  status?: string;
+  weight?: number;
+  summary?: string | null;
+  premiered?: string | null;
+  genres?: string[];
+  officialSite?: string | null;
+  image?: { medium?: string; original?: string } | null;
+  rating?: { average?: number | null };
+  externals?: { imdb?: string | null };
+  network?: { name?: string } | null;
+  webChannel?: { name?: string } | null;
+  _embedded?: { nextepisode?: TvmazeEpisode; previousepisode?: TvmazeEpisode };
+}
+
+/** Broadcast schedule entries embed the show as `show`, streaming ones under `_embedded`. */
+interface TvmazeScheduleEntry {
+  show?: TvmazeShow;
+  _embedded?: { show?: TvmazeShow };
+}
+
+function toEpisodeRef(ep?: TvmazeEpisode): EpisodeRef | undefined {
   if (!ep || typeof ep.season !== 'number' || typeof ep.number !== 'number') return undefined;
   return { season: ep.season, episode: ep.number, name: ep.name || `Episode ${ep.number}`, airstamp: ep.airstamp || undefined };
 }
@@ -34,9 +64,9 @@ function stripHtml(html?: string | null): string {
 
 /** Status, network and next/previous episode for a series, by IMDb id. */
 export async function getShowStatus(imdbId: string): Promise<ShowStatus | null> {
-  const lookup = await cachedJson(`${TVMAZE}/lookup/shows?imdb=${encodeURIComponent(imdbId)}`);
+  const lookup = await cachedJson<{ id?: number }>(`${TVMAZE}/lookup/shows?imdb=${encodeURIComponent(imdbId)}`);
   if (!lookup?.id) return null;
-  const show = await cachedJson(`${TVMAZE}/shows/${lookup.id}?embed[]=nextepisode&embed[]=previousepisode`);
+  const show = await cachedJson<TvmazeShow>(`${TVMAZE}/shows/${lookup.id}?embed[]=nextepisode&embed[]=previousepisode`);
   if (!show) return null;
   return {
     status: show.status || 'Unknown',
@@ -51,11 +81,11 @@ export async function getShowStatus(imdbId: string): Promise<ShowStatus | null> 
 export async function getAiringToday(limit = 30): Promise<MediaItem[]> {
   const today = new Date().toISOString().slice(0, 10);
   const [web, broadcast] = await Promise.all([
-    cachedJson(`${TVMAZE}/schedule/web?date=${today}`),
-    cachedJson(`${TVMAZE}/schedule?date=${today}&country=US`),
+    cachedJson<TvmazeScheduleEntry[]>(`${TVMAZE}/schedule/web?date=${today}`),
+    cachedJson<TvmazeScheduleEntry[]>(`${TVMAZE}/schedule?date=${today}&country=US`),
   ]);
 
-  const shows = new Map<string, { show: any; weight: number }>();
+  const shows = new Map<string, { show: TvmazeShow; weight: number }>();
   for (const entry of [...(Array.isArray(web) ? web : []), ...(Array.isArray(broadcast) ? broadcast : [])]) {
     const show = entry?._embedded?.show || entry?.show;
     const imdb = show?.externals?.imdb;
@@ -80,4 +110,3 @@ export async function getAiringToday(limit = 30): Promise<MediaItem[]> {
       genres: show.genres || [],
     }));
 }
-/* eslint-enable @typescript-eslint/no-explicit-any */

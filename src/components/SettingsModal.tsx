@@ -6,7 +6,7 @@ import {
   Film, Sparkles, CalendarClock, Tv, Captions, Radar, Database, Puzzle, RotateCcw,
 } from 'lucide-react';
 import { UserSettings } from '@/types';
-import { DEFAULT_ADDON_URLS, cleanAddonUrls, isDefaultAddonList } from '@/lib/scrapers/stremioAddons';
+import { DEFAULT_ADDON_URLS, cleanAddonUrls, isDefaultAddonList } from '@/lib/scrapers/addonUrls';
 import { Modal } from './Modal';
 import { setPreferredSubtitleLang } from '@/lib/subtitleLanguages';
 

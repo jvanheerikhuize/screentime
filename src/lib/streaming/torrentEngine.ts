@@ -67,10 +67,17 @@ function headTargetFor(fileSize: number): number {
 
 // Global cache to survive Next.js module reloading in dev mode
 declare global {
-  // eslint-disable-next-line no-var
   var __torrentEngineManager: TorrentEngineManager | undefined;
 }
 
+
+/** Transfer counters torrent-stream keeps on its swarm (not in its type definitions). */
+interface SwarmCounters {
+  downloaded?: number;
+  uploaded?: number;
+  wires?: unknown[];
+}
+const swarmOf = (engine: { swarm?: unknown }) => engine.swarm as SwarmCounters | undefined;
 
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v', '.wmv', '.flv', '.ts']);
 
@@ -201,12 +208,12 @@ export class TorrentEngineManager {
       resolveReady();
     });
 
-    engine.on('download', (pieceIndex: number) => {
+    engine.on('download', () => {
       managed.lastAccessed = Date.now();
       const now = Date.now();
       const elapsed = (now - managed.stats.lastSampleTime) / 1000;
       if (elapsed >= 1.5) {
-        const swarmDownloaded = (engine.swarm as any)?.downloaded || 0;
+        const swarmDownloaded = swarmOf(engine)?.downloaded || 0;
         const diff = swarmDownloaded - managed.stats.lastDownloadSample;
         managed.stats.downloadSpeed = Math.max(0, diff / elapsed);
         managed.stats.lastDownloadSample = swarmDownloaded;
@@ -215,7 +222,7 @@ export class TorrentEngineManager {
       }
     });
 
-    engine.on('error', (err: any) => {
+    engine.on('error', (err: unknown) => {
       console.error('[TorrentEngine] Swarm error:', err);
     });
 
@@ -235,16 +242,17 @@ export class TorrentEngineManager {
     }));
 
     const totalLength = managed.selectedFile ? managed.selectedFile.length : managed.files.reduce((acc, f) => acc + f.length, 0);
-    const downloaded = (managed.engine.swarm as any)?.downloaded || managed.stats.downloaded;
+    const swarm = swarmOf(managed.engine);
+    const downloaded = swarm?.downloaded || managed.stats.downloaded;
     const progress = totalLength > 0 ? Math.min(1, downloaded / totalLength) : 0;
-    const peers = (managed.engine.swarm as any)?.wires?.length || 0;
+    const peers = swarm?.wires?.length || 0;
 
     return {
       infoHash: managed.infoHash || '',
       name: managed.selectedFile?.name || 'Torrent Stream',
       totalSize: totalLength,
       downloaded,
-      uploaded: (managed.engine.swarm as any)?.uploaded || 0,
+      uploaded: swarm?.uploaded || 0,
       downloadSpeed: managed.stats.downloadSpeed,
       uploadSpeed: managed.stats.uploadSpeed,
       peers,

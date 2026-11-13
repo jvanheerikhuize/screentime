@@ -16,6 +16,40 @@ export const CINEMETA_GENRES = [
   'Sci-Fi', 'Sport', 'Thriller', 'War', 'Western',
 ];
 
+/** Episode entry of a Cinemeta series (fields vary between titles). */
+interface CinemetaVideo {
+  season?: number | string;
+  episode?: number | string;
+  number?: number | string;
+  name?: string;
+  title?: string;
+  overview?: string;
+  description?: string;
+  thumbnail?: string;
+  released?: string;
+  firstAired?: string;
+  rating?: number | string;
+}
+
+/** The parts of a Cinemeta meta object we use. */
+export interface CinemetaMeta {
+  id?: string;
+  imdb_id?: string;
+  name: string;
+  description?: string;
+  poster?: string;
+  background?: string;
+  released?: string;
+  year?: string | number;
+  moviedb_id?: number;
+  imdbRating?: string | number;
+  genres?: string[];
+  genre?: string[];
+  runtime?: string;
+  trailers?: { source?: string }[];
+  videos?: CinemetaVideo[];
+}
+
 // Cinemeta returns ~50 items per page and `skip` advances in steps of 50.
 const CINEMETA_PAGE_SIZE = 50;
 
@@ -35,7 +69,7 @@ function toIsoDate(value?: string): string | undefined {
   return value ? value.split('T')[0] : undefined;
 }
 
-function buildSeasons(videos: any[]): Season[] {
+function buildSeasons(videos: CinemetaVideo[]): Season[] {
   const bySeason = new Map<number, Season>();
   for (const v of videos) {
     const seasonNumber = Number(v.season);
@@ -69,8 +103,8 @@ function buildSeasons(videos: any[]): Season[] {
     });
 }
 
-export function cinemetaToMediaItem(meta: any, mediaType: 'movie' | 'tv'): MediaItem {
-  const imdbId: string = meta.imdb_id || meta.id;
+export function cinemetaToMediaItem(meta: CinemetaMeta, mediaType: 'movie' | 'tv'): MediaItem {
+  const imdbId = meta.imdb_id || meta.id || '';
   const released = toIsoDate(meta.released) || (meta.year ? `${String(meta.year).slice(0, 4)}-01-01` : undefined);
 
   return {
@@ -105,8 +139,8 @@ export class CinemetaService {
     const extraPath = extras.length ? `/${extras.join('&')}` : '';
     const url = `${CINEMETA_URL}/catalog/${toStremioType(mediaType)}/${catalog}${extraPath}.json`;
 
-    const data = await cachedJson(url);
-    const metas: any[] = data?.metas || [];
+    const data = await cachedJson<{ metas?: CinemetaMeta[] }>(url);
+    const metas = data?.metas || [];
     return metas.filter((m) => m?.name && (m.imdb_id || m.id)).map((m) => cinemetaToMediaItem(m, mediaType));
   }
 
@@ -133,11 +167,11 @@ export class CinemetaService {
   public async search(query: string): Promise<MediaItem[]> {
     const q = encodeURIComponent(query.trim());
     const [movies, series] = await Promise.all([
-      cachedJson(`${CINEMETA_URL}/catalog/movie/top/search=${q}.json`),
-      cachedJson(`${CINEMETA_URL}/catalog/series/top/search=${q}.json`),
+      cachedJson<{ metas?: CinemetaMeta[] }>(`${CINEMETA_URL}/catalog/movie/top/search=${q}.json`),
+      cachedJson<{ metas?: CinemetaMeta[] }>(`${CINEMETA_URL}/catalog/series/top/search=${q}.json`),
     ]);
-    const movieItems = (movies?.metas || []).map((m: any) => cinemetaToMediaItem(m, 'movie'));
-    const seriesItems = (series?.metas || []).map((m: any) => cinemetaToMediaItem(m, 'tv'));
+    const movieItems = (movies?.metas || []).map((m) => cinemetaToMediaItem(m, 'movie'));
+    const seriesItems = (series?.metas || []).map((m) => cinemetaToMediaItem(m, 'tv'));
 
     // Interleave so both movies and series show up near the top of the results.
     const merged: MediaItem[] = [];
@@ -150,7 +184,7 @@ export class CinemetaService {
 
   /** Full metadata, including every season and episode for series. */
   public async getMeta(imdbId: string, mediaType: 'movie' | 'tv'): Promise<MediaItem | null> {
-    const data = await cachedJson(`${CINEMETA_URL}/meta/${toStremioType(mediaType)}/${encodeURIComponent(imdbId)}.json`);
+    const data = await cachedJson<{ meta?: CinemetaMeta }>(`${CINEMETA_URL}/meta/${toStremioType(mediaType)}/${encodeURIComponent(imdbId)}.json`);
     if (!data?.meta?.name) return null;
     return cinemetaToMediaItem(data.meta, mediaType);
   }

@@ -26,10 +26,25 @@ async function fetchPlaylist(url: string): Promise<{ text: string; url: string }
   return text.trimStart().startsWith('#EXTM3U') ? { text, url: res.url || url } : null;
 }
 
+const uris = (playlist: string) =>
+  playlist.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
+
+/** Asks for the first kilobyte of a media segment: playlists of dead channels often still answer. */
+async function segmentAnswers(url: string): Promise<boolean> {
+  const res = await fetch(url, {
+    headers: { 'User-Agent': 'Mozilla/5.0 Screentime/1.0', Range: 'bytes=0-1023' },
+    signal: AbortSignal.timeout(6000),
+    redirect: 'follow',
+    cache: 'no-store',
+  });
+  res.body?.cancel().catch(() => {});
+  return res.ok;
+}
+
 /**
- * A channel is on air when its playlist answers with HLS data. For a master playlist the
- * first variant is checked too: many dead channels still serve a master whose variants
- * 404. (Missing CORS headers are fine: the player falls back to /api/live/proxy.)
+ * A channel is on air when its playlist, first variant and a media segment all answer:
+ * many dead channels still serve a master playlist whose variants or segments 404.
+ * (Missing CORS headers are fine: the player falls back to /api/live/proxy.)
  */
 async function check(url: string): Promise<Status> {
   const hit = cache.get(url);
@@ -42,10 +57,10 @@ async function check(url: string): Promise<Status> {
     } else {
       const master = await fetchPlaylist(url);
       if (master) {
-        const variant = master.text.includes('#EXT-X-STREAM-INF')
-          ? master.text.split(/\r?\n/).find((l) => l.trim() && !l.startsWith('#'))?.trim()
-          : undefined;
-        if (!variant || (await fetchPlaylist(new URL(variant, master.url).toString()))) status = 'ok';
+        const variantRef = master.text.includes('#EXT-X-STREAM-INF') ? uris(master.text)[0] : undefined;
+        const media = variantRef ? await fetchPlaylist(new URL(variantRef, master.url).toString()) : master;
+        const segment = media ? uris(media.text).at(-1) : undefined; // newest segment
+        if (media && segment && (await segmentAnswers(new URL(segment, media.url).toString()))) status = 'ok';
       }
     }
   } catch {
