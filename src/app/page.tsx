@@ -82,9 +82,14 @@ export default function Home() {
     if (!playable.length) return;
     setSelectedMedia(null);
     const episodeTag = context.season ? ` · S${context.season}E${context.episode}` : '';
-    const subtitleQuery: SubtitleQuery | undefined = media.imdbId
-      ? { imdbId: media.imdbId, mediaType: media.mediaType, season: context.season, episode: context.episode }
-      : undefined;
+    // Anime episodes are numbered absolutely; subtitles use the mapped IMDb series and season.
+    const subtitleQuery: SubtitleQuery | undefined = media.anime
+      ? media.anime.imdbId
+        ? { imdbId: media.anime.imdbId, mediaType: media.mediaType, season: media.anime.season ?? 1, episode: context.episode }
+        : undefined
+      : media.imdbId
+        ? { imdbId: media.imdbId, mediaType: media.mediaType, season: context.season, episode: context.episode }
+        : undefined;
     setActivePlayer({ title: `${media.title}${episodeTag}`, sources: playable, subtitleQuery });
   };
 
@@ -138,6 +143,12 @@ export default function Home() {
             <>
               <PageHeader eyebrow="Browse" title="Series" description="Every season and episode, ready to stream." />
               <CatalogBrowser mediaType="tv" onSelectMedia={setSelectedMedia} />
+            </>
+          )}
+          {activeTab === 'anime' && (
+            <>
+              <PageHeader eyebrow="Browse" title="Anime" description="Trending, seasonal and all-time favourites, powered by AniList." />
+              <CatalogBrowser mediaType="anime" onSelectMedia={setSelectedMedia} />
             </>
           )}
           {activeTab === 'live' && <LiveChannelsGrid onPlayChannel={handlePlayLiveChannel} />}

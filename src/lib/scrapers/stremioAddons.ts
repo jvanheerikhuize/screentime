@@ -60,20 +60,28 @@ export class StremioAddonScraper {
 
   public async fetchStreams(params: {
     imdbId?: string;
+    /** Kitsu id for anime; episodes are numbered absolutely (no seasons). */
+    kitsuId?: number;
     tmdbId?: number | string;
     mediaType: 'movie' | 'tv';
     season?: number;
     episode?: number;
     title?: string;
   }): Promise<StreamSource[]> {
-    const { imdbId, mediaType, season = 1, episode = 1, title = 'Media' } = params;
+    const { imdbId, kitsuId, mediaType, season = 1, episode = 1, title = 'Media' } = params;
 
-    if (!imdbId) {
-      console.log(`[StremioScraper] No IMDb ID provided for ${title}, skipping addon query.`);
+    if (!imdbId && !kitsuId) {
+      console.log(`[StremioScraper] No IMDb or Kitsu id for ${title}, skipping addon query.`);
       return [];
     }
 
-    const streamId = mediaType === 'tv' ? `${imdbId}:${season}:${episode}` : imdbId;
+    const streamId = kitsuId
+      ? mediaType === 'tv'
+        ? `kitsu:${kitsuId}:${episode}`
+        : `kitsu:${kitsuId}`
+      : mediaType === 'tv'
+        ? `${imdbId}:${season}:${episode}`
+        : imdbId!;
     const typePath = mediaType === 'tv' ? 'series' : 'movie';
 
     const results: StreamSource[] = [];

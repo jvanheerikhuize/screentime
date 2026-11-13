@@ -74,6 +74,12 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({ media: baseM
   const seasons = media.seasons || [];
   const currentSeason = seasons.find((s) => s.seasonNumber === season);
   const currentEpisode = currentSeason?.episodes.find((e) => e.episodeNumber === episode);
+  // Long seasons (e.g. anime with hundreds of episodes) are shown 50 at a time.
+  const EPISODE_PAGE = 50;
+  const seasonEpisodes = currentSeason?.episodes || [];
+  const currentIndex = Math.max(0, seasonEpisodes.findIndex((e) => e.episodeNumber === episode));
+  const rangeStart = episodeRange ?? Math.floor(currentIndex / EPISODE_PAGE) * EPISODE_PAGE;
+  const visibleEpisodes = seasonEpisodes.slice(rangeStart, rangeStart + EPISODE_PAGE);
 
   useEffect(() => {
     let cancelled = false;
@@ -130,7 +136,7 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({ media: baseM
     onPlaySource([source, ...ranked.filter((s) => s !== source)].slice(0, 8), media, isSeries ? { season, episode } : {});
 
   const year = (media.releaseDate || media.firstAirDate)?.split('-')[0];
-  const playLabel = isSeries ? `Play S${season} · E${episode}` : 'Play';
+  const playLabel = isSeries ? (media.anime ? `Play episode ${episode}` : `Play S${season} · E${episode}`) : 'Play';
 
   return (
     <Modal onClose={onClose} label={media.title}>
@@ -219,12 +225,33 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({ media: baseM
         {/* Episodes */}
         {isSeries && seasons.length > 0 && (
           <div className="space-y-3">
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
               <h3 className="font-display text-lg font-semibold text-white">Episodes</h3>
+              <div className="flex items-center gap-2">
+              {seasonEpisodes.length > EPISODE_PAGE && (
+                <select
+                  value={rangeStart}
+                  onChange={(e) => setEpisodeRange(Number(e.target.value))}
+                  aria-label="Episode range"
+                  className="bg-white/[0.06] ring-1 ring-inset ring-white/10 text-sm text-white rounded-full px-3.5 py-1.5 outline-none focus:ring-white/25 [&>option]:bg-zinc-900"
+                >
+                  {Array.from({ length: Math.ceil(seasonEpisodes.length / EPISODE_PAGE) }, (_, i) => {
+                    const first = seasonEpisodes[i * EPISODE_PAGE];
+                    const last = seasonEpisodes[Math.min(seasonEpisodes.length, (i + 1) * EPISODE_PAGE) - 1];
+                    return (
+                      <option key={i} value={i * EPISODE_PAGE}>
+                        {first.episodeNumber}–{last.episodeNumber}
+                      </option>
+                    );
+                  })}
+                </select>
+              )}
+              {seasons.length > 1 && (
               <select
                 value={season}
                 onChange={(e) => {
                   const next = seasons.find((s) => s.seasonNumber === Number(e.target.value));
+                  setEpisodeRange(null);
                   selectEpisode(Number(e.target.value), next?.episodes[0]?.episodeNumber || 1);
                 }}
                 className="bg-white/[0.06] ring-1 ring-inset ring-white/10 text-sm text-white rounded-full px-3.5 py-1.5 outline-none focus:ring-white/25 [&>option]:bg-zinc-900"
@@ -236,9 +263,11 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({ media: baseM
                   </option>
                 ))}
               </select>
+              )}
+              </div>
             </div>
             <div className="divide-y divide-white/[0.06] ring-1 ring-inset ring-white/[0.08] rounded-2xl overflow-hidden bg-white/[0.02]">
-              {currentSeason?.episodes.map((ep) => {
+              {visibleEpisodes.map((ep) => {
                 const active = ep.episodeNumber === episode;
                 return (
                   <button
@@ -248,7 +277,7 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({ media: baseM
                       active ? 'bg-rose-600/15' : 'hover:bg-zinc-800/70'
                     }`}
                   >
-                    <span className={`w-7 text-sm font-mono ${active ? 'text-rose-400' : 'text-zinc-500'}`}>{ep.episodeNumber}</span>
+                    <span className={`min-w-7 text-sm font-mono ${active ? 'text-rose-400' : 'text-zinc-500'}`}>{ep.episodeNumber}</span>
                     <span className={`flex-1 truncate text-sm ${active ? 'text-white font-semibold' : 'text-zinc-300'}`}>{ep.name}</span>
                     {active && <Play className="w-4 h-4 text-rose-400 fill-rose-400" />}
                   </button>

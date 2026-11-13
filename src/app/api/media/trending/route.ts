@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { tmdbService, FEATURED_HERO, SAMPLE_MEDIA_CATALOG } from '@/lib/metadata/tmdb';
 import { cinemetaService } from '@/lib/metadata/cinemeta';
+import { getAiringToday } from '@/lib/metadata/tvmaze';
+import { getAnimeCatalog } from '@/lib/metadata/anilist';
 import { MediaItem } from '@/types';
 
 export const runtime = 'nodejs';
@@ -27,6 +29,10 @@ const GENRE_ROWS: { genre: string; mediaType: 'movie' | 'tv'; title: string; sub
 const ROW_LIMIT = 40;
 
 export async function GET() {
+  const airingTodayPromise = getAiringToday().catch(() => []);
+  const animePromise = getAnimeCatalog({ catalog: 'trending', perPage: 30 })
+    .then((r) => r.items)
+    .catch(() => []);
   const [tmdbTrending, popularMovies, popularSeries, topMovies, topSeries, ...genreResults] =
     await Promise.all([
       tmdbService.getTrending('all', 'week').catch(() => []),
@@ -54,6 +60,8 @@ export async function GET() {
     },
     { key: 'popular-movies', title: 'Popular Movies', subtitle: 'The most-watched films right now', items: movies.slice(0, ROW_LIMIT) },
     { key: 'popular-series', title: 'Popular Series', subtitle: 'The most-watched shows right now', items: series.slice(0, ROW_LIMIT) },
+    { key: 'airing-today', title: 'New episodes today', subtitle: 'Series with a new episode out today', items: await airingTodayPromise },
+    { key: 'trending-anime', title: 'Trending anime', subtitle: 'Popular on AniList this week', items: await animePromise },
     { key: 'top-movies', title: 'Highly Rated Movies', subtitle: 'Best-reviewed popular films (IMDb 7.5+)', items: topMovies.slice(0, ROW_LIMIT) },
     { key: 'top-series', title: 'Highly Rated Series', subtitle: 'Best-reviewed popular shows (IMDb 7.5+)', items: topSeries.slice(0, ROW_LIMIT) },
     ...GENRE_ROWS.map((r, i) => ({

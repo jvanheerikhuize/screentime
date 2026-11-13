@@ -1,4 +1,5 @@
 import { MediaItem } from '@/types';
+import { getAnimeDetails } from '@/lib/metadata/anilist';
 import { cinemetaService } from './cinemeta';
 
 // Curated high quality seed media for instant out-of-the-box browsing & playback testing
@@ -349,6 +350,10 @@ export class TMDBService {
   public async getDetails(id: string | number, mediaType: 'movie' | 'tv' = 'movie'): Promise<MediaItem | null> {
     const found = SAMPLE_MEDIA_CATALOG.find((m) => String(m.id) === String(id) || String(m.tmdbId) === String(id));
     if (found) return found;
+
+    // Anime from AniList.
+    const anilist = /^al-(\d+)$/.exec(String(id));
+    if (anilist) return getAnimeDetails(Number(anilist[1]));
 
     // IMDb ids come from the keyless Cinemeta catalog.
     if (/^tt\d+$/.test(String(id))) {

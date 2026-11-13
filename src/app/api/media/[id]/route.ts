@@ -36,19 +36,25 @@ export async function GET(
         ? getStreamsForMedia(details.tmdbId)
         : [];
 
-    const imdbId = searchParams.get('imdbId') || details?.imdbId;
+    const kitsuId = details?.anime?.kitsuId;
+    const imdbId = kitsuId ? undefined : searchParams.get('imdbId') || details?.imdbId;
     const mediaTitle = details?.title || 'Media';
-    const searchQuery = type === 'tv'
+    const searchQuery = details?.anime
+      ? type === 'tv'
+        ? `${mediaTitle} ${String(episode).padStart(2, '0')}`
+        : mediaTitle
+      : type === 'tv'
       ? `${mediaTitle} S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}`
       : `${mediaTitle} ${details?.releaseDate ? details.releaseDate.split('-')[0] : ''}`.trim();
 
     const fetchTasks: Promise<any[]>[] = [];
 
     // 1. Stremio addons (Torrentio, MediaFusion by default)
-    if (imdbId) {
+    if (imdbId || kitsuId) {
       fetchTasks.push(
         stremioScraper.fetchStreams({
           imdbId,
+          kitsuId,
           tmdbId: id,
           mediaType: type,
           season,

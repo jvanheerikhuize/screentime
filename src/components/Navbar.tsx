@@ -5,7 +5,7 @@ import { Search, Settings2, Film, Loader2, X } from 'lucide-react';
 import { MediaItem } from '@/types';
 import { Logo } from '@/components/Logo';
 
-export type AppTab = 'home' | 'movies' | 'tv' | 'live';
+export type AppTab = 'home' | 'movies' | 'tv' | 'anime' | 'live';
 
 interface NavbarProps {
   activeTab: AppTab;
@@ -18,6 +18,7 @@ const TABS: { key: AppTab; label: string }[] = [
   { key: 'home', label: 'Home' },
   { key: 'movies', label: 'Movies' },
   { key: 'tv', label: 'Series' },
+  { key: 'anime', label: 'Anime' },
   { key: 'live', label: 'Live TV' },
 ];
 

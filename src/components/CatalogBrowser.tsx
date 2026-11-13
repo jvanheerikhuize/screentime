@@ -4,12 +4,35 @@ import React, { useEffect, useRef, useState } from 'react';
 import { MediaItem } from '@/types';
 import { PosterCard, PosterSkeleton } from '@/components/PosterCard';
 
-type BrowseSource = 'top' | 'year';
+type BrowseType = 'movie' | 'tv' | 'anime';
+type BrowseSource = 'top' | 'year' | 'trending' | 'popular' | 'season';
 
 interface CatalogBrowserProps {
-  mediaType: 'movie' | 'tv';
+  mediaType: BrowseType;
   onSelectMedia: (item: MediaItem) => void;
 }
+
+const ANIME_GENRES = [
+  'Action', 'Adventure', 'Comedy', 'Drama', 'Fantasy', 'Horror', 'Mecha', 'Music', 'Mystery',
+  'Psychological', 'Romance', 'Sci-Fi', 'Slice of Life', 'Sports', 'Supernatural', 'Thriller',
+];
+
+const SOURCES: Record<BrowseType, { key: BrowseSource; label: string; genres: boolean }[]> = {
+  movie: [
+    { key: 'top', label: 'Popular', genres: true },
+    { key: 'year', label: 'By year', genres: false },
+  ],
+  tv: [
+    { key: 'top', label: 'Popular', genres: true },
+    { key: 'year', label: 'By year', genres: false },
+  ],
+  anime: [
+    { key: 'trending', label: 'Trending', genres: true },
+    { key: 'season', label: 'This season', genres: false },
+    { key: 'popular', label: 'All-time popular', genres: true },
+    { key: 'top', label: 'Top rated', genres: true },
+  ],
+};
 
 const GENRES = [
   'Action', 'Adventure', 'Animation', 'Biography', 'Comedy', 'Crime', 'Documentary',
@@ -23,7 +46,7 @@ const YEARS = Array.from({ length: CURRENT_YEAR - 1979 }, (_, i) => String(CURRE
 const CINEMETA_PAGE = 50;
 
 async function fetchPage(
-  mediaType: 'movie' | 'tv',
+  mediaType: BrowseType,
   source: BrowseSource,
   genre: string | null,
   pageIndex: number
@@ -39,7 +62,7 @@ async function fetchPage(
 }
 
 export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({ mediaType, onSelectMedia }) => {
-  const [source, setSource] = useState<BrowseSource>('top');
+  const [source, setSource] = useState<BrowseSource>(SOURCES[mediaType][0].key);
   const [genre, setGenre] = useState<string | null>(null);
   const [items, setItems] = useState<MediaItem[]>([]);
   const [page, setPage] = useState(0);
@@ -48,10 +71,9 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({ mediaType, onSel
   // Bumped on every filter change so in-flight "load more" responses for the old filter are dropped.
   const filterVersion = useRef(0);
 
-  const sources: { key: BrowseSource; label: string }[] = [
-    { key: 'top', label: 'Popular' },
-    { key: 'year', label: 'By year' },
-  ];
+  const sources = SOURCES[mediaType];
+  const genres = mediaType === 'anime' ? ANIME_GENRES : GENRES;
+  const showGenres = sources.find((s) => s.key === source)?.genres ?? false;
 
   // First page for the current filter.
   useEffect(() => {
@@ -146,9 +168,9 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({ mediaType, onSel
       </div>
 
       {/* Genre chips wrap onto extra lines instead of scrolling */}
-      {source === 'top' && (
+      {showGenres && (
         <div className="flex flex-wrap gap-2">
-          {[null, ...GENRES].map((g) => (
+          {[null, ...genres].map((g) => (
             <button key={g ?? 'all'} onClick={() => changeFilter(source, g)} className={chip(genre === g)}>
               {g ?? 'All'}
             </button>

@@ -16,6 +16,14 @@ export interface MediaItem {
   duration?: number;
   trailerUrl?: string;
   seasons?: Season[];
+  /** Set for anime from AniList; streams are found by Kitsu id (absolute episode numbers). */
+  anime?: {
+    anilistId: number;
+    kitsuId?: number;
+    /** IMDb id and season of the matching series, used to find subtitles. */
+    imdbId?: string;
+    season?: number;
+  };
 }
 
 export interface Season {
