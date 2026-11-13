@@ -1,10 +1,16 @@
 import type { Metadata } from 'next';
-import { Geist, Geist_Mono } from 'next/font/google';
+import { Bricolage_Grotesque, Geist, Geist_Mono } from 'next/font/google';
 import './globals.css';
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
   subsets: ['latin'],
+});
+
+const display = Bricolage_Grotesque({
+  variable: '--font-bricolage',
+  subsets: ['latin'],
+  weight: ['500', '600', '700', '800'],
 });
 
 const geistMono = Geist_Mono({
@@ -13,8 +19,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'Screentime — Open Media & Torrent Streaming Engine',
-  description: 'Self-hosted media dashboard with on-demand BitTorrent streaming and open media playback.',
+  title: 'Screentime',
+  description: 'Movies, series and live TV, streamed on demand.',
 };
 
 export default function RootLayout({
@@ -23,8 +29,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`${geistSans.variable} ${geistMono.variable} dark bg-zinc-950`}>
-      <body className="min-h-screen bg-zinc-950 text-zinc-100 antialiased font-sans">
+    <html lang="en" className={`${geistSans.variable} ${geistMono.variable} ${display.variable} dark`}>
+      <body className="min-h-screen antialiased font-sans selection:bg-rose-500/80 selection:text-white">
         {children}
       </body>
     </html>
