@@ -30,8 +30,13 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
+# env files (the example is committed)
 .env*
+!.env.example
+
+# AI coding-agent notes that `next dev` writes when it detects an agent
+/AGENTS.md
+/CLAUDE.md
 
 # vercel
 .vercel
