@@ -1,206 +1,185 @@
 'use client';
 
-import React, { useState } from 'react';
-import { Film, Search, SlidersHorizontal, Magnet, Sparkles, Tv, Clapperboard, Radio } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Search, Settings2, Film, Loader2, X } from 'lucide-react';
 import { MediaItem } from '@/types';
+import { Logo } from '@/components/Logo';
+
+export type AppTab = 'home' | 'movies' | 'tv' | 'live';
 
 interface NavbarProps {
-  activeTab: 'home' | 'movies' | 'tv' | 'live' | 'magnet' | 'settings';
-  setActiveTab: (tab: 'home' | 'movies' | 'tv' | 'live' | 'magnet' | 'settings') => void;
+  activeTab: AppTab;
+  setActiveTab: (tab: AppTab) => void;
   onSelectMedia: (media: MediaItem) => void;
-  onOpenMagnetModal: () => void;
   onOpenSettingsModal: () => void;
 }
 
-export const Navbar: React.FC<NavbarProps> = ({
-  activeTab,
-  setActiveTab,
-  onSelectMedia,
-  onOpenMagnetModal,
-  onOpenSettingsModal,
-}) => {
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<MediaItem[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
-  const [showDropdown, setShowDropdown] = useState(false);
+const TABS: { key: AppTab; label: string }[] = [
+  { key: 'home', label: 'Home' },
+  { key: 'movies', label: 'Movies' },
+  { key: 'tv', label: 'Series' },
+  { key: 'live', label: 'Live TV' },
+];
 
-  const handleSearch = async (val: string) => {
-    setSearchQuery(val);
-    if (!val.trim()) {
-      setSearchResults([]);
-      setShowDropdown(false);
-      return;
-    }
+export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, onSelectMedia, onOpenSettingsModal }) => {
+  const [scrolled, setScrolled] = useState(false);
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<MediaItem[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [open, setOpen] = useState(false);
+  const searchRef = useRef<HTMLDivElement>(null);
+  const requestId = useRef(0);
 
-    setIsSearching(true);
-    setShowDropdown(true);
-    try {
-      const res = await fetch(`/api/search?q=${encodeURIComponent(val)}`);
-      const data = await res.json();
-      setSearchResults(data.results || []);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsSearching(false);
-    }
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 24);
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
+  // Close the results when clicking elsewhere.
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, []);
+
+  // Debounced search; stale responses are ignored.
+  useEffect(() => {
+    const q = query.trim();
+    if (!q) return;
+    const id = ++requestId.current;
+    const timer = setTimeout(() => {
+      setSearching(true);
+      fetch(`/api/search?q=${encodeURIComponent(q)}`)
+        .then((r) => r.json())
+        .then((data) => {
+          if (id === requestId.current) setResults(data.results || []);
+        })
+        .catch(() => {
+          if (id === requestId.current) setResults([]);
+        })
+        .finally(() => {
+          if (id === requestId.current) setSearching(false);
+        });
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  const clearSearch = () => {
+    setQuery('');
+    setResults([]);
+    setOpen(false);
   };
 
+  const solid = scrolled || activeTab !== 'home';
+
   return (
-    <header className="fixed top-0 left-0 right-0 z-40 bg-zinc-950/80 backdrop-blur-md border-b border-zinc-800/60 transition-all">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
-        {/* Brand Logo */}
-        <div className="flex items-center gap-8">
-          <div
-            onClick={() => setActiveTab('home')}
-            className="flex items-center gap-2.5 cursor-pointer group"
-          >
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-rose-600 via-red-500 to-amber-500 flex items-center justify-center shadow-lg shadow-rose-600/30 group-hover:scale-105 transition-transform">
-              <Film className="w-5 h-5 text-white" />
-            </div>
-            <div className="flex flex-col">
-              <span className="font-bold text-lg tracking-tight bg-gradient-to-r from-white via-zinc-100 to-zinc-400 bg-clip-text text-transparent">
-                Screentime
-              </span>
-              <span className="text-[10px] uppercase font-semibold text-rose-500 tracking-wider">
-                Open Stream Engine
-              </span>
-            </div>
-          </div>
+    <header
+      className={`fixed top-0 inset-x-0 z-40 transition-colors duration-300 ${
+        solid ? 'bg-[color-mix(in_srgb,var(--background)_82%,transparent)] backdrop-blur-xl border-b border-white/[0.06]' : 'bg-gradient-to-b from-black/70 to-transparent'
+      }`}
+    >
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-3 md:pt-0 md:h-16 flex flex-wrap md:flex-nowrap items-center gap-x-8">
+        <Logo onClick={() => setActiveTab('home')} />
 
-          {/* Navigation Links */}
-          <nav className="hidden md:flex items-center gap-1">
+        <nav className="order-3 md:order-none w-full md:w-auto -mx-2.5 md:mx-0 mt-1 md:mt-0 flex items-center gap-1 min-w-0 overflow-x-auto no-scrollbar">
+          {TABS.map((t) => (
             <button
-              onClick={() => setActiveTab('home')}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
-                activeTab === 'home'
-                  ? 'bg-zinc-800 text-white shadow-sm'
-                  : 'text-zinc-400 hover:text-white hover:bg-zinc-900/60'
+              key={t.key}
+              onClick={() => setActiveTab(t.key)}
+              aria-current={activeTab === t.key ? 'page' : undefined}
+              className={`relative px-2.5 sm:px-3 py-2 text-[13px] sm:text-sm font-medium whitespace-nowrap transition-colors ${
+                activeTab === t.key ? 'text-white' : 'text-zinc-400 hover:text-zinc-100'
               }`}
             >
-              Discover
+              {t.label}
+              {t.key === 'live' && <span className="absolute top-1.5 right-0.5 w-1.5 h-1.5 rounded-full bg-rose-500" />}
+              <span
+                className={`absolute left-2.5 right-2.5 sm:left-3 sm:right-3 -bottom-px h-0.5 rounded-full bg-gradient-to-r from-rose-500 to-orange-400 transition-opacity ${
+                  activeTab === t.key ? 'opacity-100' : 'opacity-0'
+                }`}
+              />
             </button>
-            <button
-              onClick={() => setActiveTab('movies')}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1.5 transition-all ${
-                activeTab === 'movies'
-                  ? 'bg-zinc-800 text-white shadow-sm'
-                  : 'text-zinc-400 hover:text-white hover:bg-zinc-900/60'
-              }`}
-            >
-              <Clapperboard className="w-4 h-4" />
-              Movies
-            </button>
-            <button
-              onClick={() => setActiveTab('tv')}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1.5 transition-all ${
-                activeTab === 'tv'
-                  ? 'bg-zinc-800 text-white shadow-sm'
-                  : 'text-zinc-400 hover:text-white hover:bg-zinc-900/60'
-              }`}
-            >
-              <Tv className="w-4 h-4" />
-              Series
-            </button>
-            <button
-              onClick={() => setActiveTab('live')}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium flex items-center gap-1.5 transition-all ${
-                activeTab === 'live'
-                  ? 'bg-zinc-800 text-white shadow-sm'
-                  : 'text-zinc-400 hover:text-white hover:bg-zinc-900/60'
-              }`}
-            >
-              <Radio className="w-4 h-4 text-rose-500" />
-              Live TV
-              <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse ml-0.5" />
-            </button>
-          </nav>
-        </div>
+          ))}
+        </nav>
 
-        {/* Search & Actions */}
-        <div className="flex items-center gap-3 flex-1 max-w-md justify-end">
-          {/* Search Input */}
-          <div className="relative w-full max-w-xs">
+        <div className="ml-auto flex items-center gap-2">
+          <div ref={searchRef} className="relative">
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400 pointer-events-none" />
               <input
                 type="text"
-                value={searchQuery}
-                onChange={(e) => handleSearch(e.target.value)}
-                onFocus={() => searchQuery && setShowDropdown(true)}
-                placeholder="Search movies, series, anime..."
-                className="w-full bg-zinc-900/90 border border-zinc-700/60 focus:border-rose-500 rounded-full pl-9 pr-4 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-rose-500 transition-all"
+                value={query}
+                onChange={(e) => {
+                  setQuery(e.target.value);
+                  setOpen(Boolean(e.target.value.trim()));
+                  if (!e.target.value.trim()) setResults([]);
+                }}
+                onFocus={() => query.trim() && setOpen(true)}
+                onKeyDown={(e) => e.key === 'Escape' && clearSearch()}
+                placeholder="Search"
+                aria-label="Search titles"
+                className="w-28 sm:w-44 focus:w-36 sm:focus:w-72 transition-[width] duration-300 bg-white/[0.07] hover:bg-white/10 focus:bg-zinc-900 ring-1 ring-white/10 focus:ring-white/25 rounded-full pl-9 pr-8 py-2 text-sm text-white placeholder-zinc-400 outline-none"
               />
+              {query && (
+                <button onClick={clearSearch} aria-label="Clear search" className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
 
-            {/* Live Search Dropdown */}
-            {showDropdown && (
-              <div className="absolute top-full mt-2 w-full bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl overflow-hidden z-50 max-h-80 overflow-y-auto">
-                {isSearching ? (
-                  <div className="p-4 text-center text-xs text-zinc-400 flex items-center justify-center gap-2">
-                    <Sparkles className="w-3.5 h-3.5 animate-spin text-rose-500" />
-                    Searching catalogs...
-                  </div>
-                ) : searchResults.length > 0 ? (
-                  searchResults.map((item) => (
-                    <div
-                      key={item.id}
-                      onClick={() => {
-                        onSelectMedia(item);
-                        setShowDropdown(false);
-                        setSearchQuery('');
-                      }}
-                      className="p-2.5 hover:bg-zinc-800/80 cursor-pointer flex items-center gap-3 transition-colors border-b border-zinc-800/40 last:border-b-0"
-                    >
-                      {item.posterPath ? (
-                        <img
-                          src={item.posterPath}
-                          alt={item.title}
-                          className="w-9 h-13 object-cover rounded shadow-sm bg-zinc-800 flex-shrink-0"
-                        />
-                      ) : (
-                        <div className="w-9 h-13 bg-zinc-800 rounded flex items-center justify-center flex-shrink-0">
-                          <Film className="w-4 h-4 text-zinc-600" />
-                        </div>
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-white truncate">{item.title}</p>
-                        <p className="text-xs text-zinc-400 capitalize">
-                          {item.mediaType} {item.releaseDate ? `• ${item.releaseDate.split('-')[0]}` : ''}
-                        </p>
-                      </div>
-                      {item.voteAverage > 0 && (
-                        <span className="text-xs font-semibold px-2 py-0.5 rounded bg-zinc-800 text-amber-400 border border-amber-500/20">
-                          ★ {item.voteAverage}
-                        </span>
-                      )}
+            {open && (
+              <div className="absolute right-0 top-full mt-2 w-[min(22rem,calc(100vw-2rem))] rounded-2xl bg-zinc-900/95 backdrop-blur-xl ring-1 ring-white/10 shadow-2xl shadow-black/60 overflow-hidden">
+                <div className="max-h-[60vh] overflow-y-auto py-1.5">
+                  {searching && results.length === 0 ? (
+                    <div className="p-5 flex items-center justify-center gap-2 text-xs text-zinc-400">
+                      <Loader2 className="w-4 h-4 animate-spin text-rose-400" />
+                      Searching…
                     </div>
-                  ))
-                ) : (
-                  <div className="p-4 text-center text-xs text-zinc-400">
-                    No results found for &quot;{searchQuery}&quot;
-                  </div>
-                )}
+                  ) : results.length > 0 ? (
+                    results.map((item) => (
+                      <button
+                        key={`${item.mediaType}-${item.id}`}
+                        onClick={() => {
+                          onSelectMedia(item);
+                          clearSearch();
+                        }}
+                        className="w-full px-3 py-2 flex items-center gap-3 text-left hover:bg-white/[0.06] transition-colors"
+                      >
+                        {item.posterPath ? (
+                          <img src={item.posterPath} alt="" className="w-9 h-[54px] object-cover rounded-md bg-zinc-800 flex-shrink-0" />
+                        ) : (
+                          <div className="w-9 h-[54px] rounded-md bg-zinc-800 flex items-center justify-center flex-shrink-0">
+                            <Film className="w-4 h-4 text-zinc-600" />
+                          </div>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium text-white truncate">{item.title}</p>
+                          <p className="text-xs text-zinc-500">
+                            {item.mediaType === 'tv' ? 'Series' : 'Movie'}
+                            {(item.releaseDate || item.firstAirDate) ? ` · ${(item.releaseDate || item.firstAirDate)!.split('-')[0]}` : ''}
+                          </p>
+                        </div>
+                        {item.voteAverage > 0 && <span className="text-xs font-medium text-zinc-400">★ {item.voteAverage.toFixed(1)}</span>}
+                      </button>
+                    ))
+                  ) : (
+                    <p className="p-5 text-center text-xs text-zinc-500">No results for “{query}”</p>
+                  )}
+                </div>
               </div>
             )}
           </div>
 
-          {/* Direct Magnet Stream Button */}
-          <button
-            onClick={onOpenMagnetModal}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600/10 hover:bg-rose-600 text-rose-400 hover:text-white border border-rose-500/30 hover:border-rose-600 text-sm font-medium transition-all shadow-sm group"
-            title="Stream Magnet Link / Torrent"
-          >
-            <Magnet className="w-4 h-4 text-rose-500 group-hover:text-white group-hover:rotate-12 transition-transform" />
-            <span className="hidden sm:inline">Stream Magnet</span>
-          </button>
-
-          {/* Settings Button */}
           <button
             onClick={onOpenSettingsModal}
-            className="p-2 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800/80 transition-colors"
-            title="Settings & Integrations"
+            title="Settings"
+            aria-label="Settings"
+            className="w-9 h-9 rounded-full flex items-center justify-center text-zinc-300 hover:text-white hover:bg-white/10 transition-colors"
           >
-            <SlidersHorizontal className="w-4 h-4" />
+            <Settings2 className="w-[18px] h-[18px]" />
           </button>
         </div>
       </div>

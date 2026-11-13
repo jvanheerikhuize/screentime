@@ -1,8 +1,8 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Film, Loader2, Star } from 'lucide-react';
 import { MediaItem } from '@/types';
+import { PosterCard, PosterSkeleton } from '@/components/PosterCard';
 
 type BrowseSource = 'top' | 'year';
 
@@ -50,7 +50,7 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({ mediaType, onSel
 
   const sources: { key: BrowseSource; label: string }[] = [
     { key: 'top', label: 'Popular' },
-    { key: 'year', label: 'By Year' },
+    { key: 'year', label: 'By year' },
   ];
 
   // First page for the current filter.
@@ -107,29 +107,34 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({ mediaType, onSel
       });
   };
 
+  const chip = (active: boolean) =>
+    `px-3.5 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors ${
+      active ? 'bg-white text-zinc-950' : 'bg-white/[0.05] text-zinc-300 ring-1 ring-inset ring-white/[0.08] hover:bg-white/10 hover:text-white'
+    }`;
+
   return (
-    <div className="space-y-5">
-      {/* Popular / By Year, plus the year picker */}
-      <div className="flex flex-wrap items-center gap-2">
-        {sources.map((s) => (
-          <button
-            key={s.key}
-            onClick={() => changeFilter(s.key, s.key === 'year' ? String(CURRENT_YEAR) : null)}
-            className={`px-4 py-2 rounded-xl text-sm font-semibold transition-colors ${
-              source === s.key
-                ? 'bg-rose-600 text-white shadow-lg shadow-rose-600/20'
-                : 'bg-zinc-900 text-zinc-400 border border-zinc-800 hover:text-white'
-            }`}
-          >
-            {s.label}
-          </button>
-        ))}
+    <div className="space-y-6">
+      {/* Popular / By year, plus the year picker */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="inline-flex p-1 rounded-full bg-white/[0.05] ring-1 ring-inset ring-white/[0.08]">
+          {sources.map((s) => (
+            <button
+              key={s.key}
+              onClick={() => changeFilter(s.key, s.key === 'year' ? String(CURRENT_YEAR) : null)}
+              className={`px-4 py-1.5 rounded-full text-sm font-medium transition-all ${
+                source === s.key ? 'bg-gradient-to-r from-rose-500 to-orange-400 text-white shadow-lg shadow-rose-900/40' : 'text-zinc-400 hover:text-white'
+              }`}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
         {source === 'year' && (
           <select
             value={genre ?? String(CURRENT_YEAR)}
             onChange={(e) => changeFilter('year', e.target.value)}
             aria-label="Year"
-            className="bg-zinc-900 border border-zinc-800 text-sm text-white rounded-xl px-3 py-2 focus:outline-none focus:border-rose-500"
+            className="bg-white/[0.05] ring-1 ring-inset ring-white/[0.08] text-sm text-white rounded-full pl-4 pr-3 py-2 outline-none focus:ring-white/25 [&>option]:bg-zinc-900"
           >
             {YEARS.map((y) => (
               <option key={y} value={y}>
@@ -144,73 +149,34 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({ mediaType, onSel
       {source === 'top' && (
         <div className="flex flex-wrap gap-2">
           {[null, ...GENRES].map((g) => (
-            <button
-              key={g ?? 'all'}
-              onClick={() => changeFilter(source, g)}
-              className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap border transition-colors ${
-                genre === g
-                  ? 'bg-zinc-100 text-zinc-900 border-zinc-100'
-                  : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:text-white'
-              }`}
-            >
-              {g ?? 'All genres'}
+            <button key={g ?? 'all'} onClick={() => changeFilter(source, g)} className={chip(genre === g)}>
+              {g ?? 'All'}
             </button>
           ))}
         </div>
       )}
 
-      {/* Grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-x-4 gap-y-7">
         {items.map((item) => (
-          <div
-            key={item.id}
-            onClick={() => onSelectMedia(item)}
-            className="rounded-2xl overflow-hidden bg-zinc-900 border border-zinc-800 hover:border-zinc-700 transition-all duration-300 hover:shadow-2xl hover:shadow-rose-600/10 hover:-translate-y-1 cursor-pointer flex flex-col justify-between"
-          >
-            <div className="relative aspect-[2/3] w-full bg-zinc-950">
-              {item.posterPath ? (
-                <img src={item.posterPath} alt={item.title} loading="lazy" className="w-full h-full object-cover" />
-              ) : (
-                <div className="w-full h-full flex items-center justify-center text-zinc-600">
-                  <Film className="w-8 h-8" />
-                </div>
-              )}
-              {item.voteAverage > 0 && (
-                <span className="absolute top-2 right-2 flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-zinc-950/85 text-amber-400 text-[11px] font-semibold">
-                  <Star className="w-3 h-3 fill-amber-400" />
-                  {item.voteAverage}
-                </span>
-              )}
-            </div>
-            <div className="p-3">
-              <h3 className="font-semibold text-sm text-zinc-100 truncate">{item.title}</h3>
-              <p className="text-xs text-zinc-400 mt-1">
-                {(item.releaseDate || item.firstAirDate)?.split('-')[0] || '—'}
-                {item.genres?.[0] ? ` · ${item.genres[0]}` : ''}
-              </p>
-            </div>
-          </div>
+          <PosterCard key={item.id} item={item} onSelect={onSelectMedia} />
         ))}
+        {loading && Array.from({ length: items.length ? 6 : 18 }).map((_, i) => <PosterSkeleton key={`s${i}`} />)}
       </div>
 
       {!loading && items.length === 0 && (
-        <p className="text-sm text-zinc-500 py-10 text-center">No titles found for this filter.</p>
+        <p className="text-sm text-zinc-500 py-16 text-center">No titles found for this filter.</p>
       )}
 
-      <div className="flex justify-center pt-2">
-        {loading ? (
-          <Loader2 className="w-6 h-6 text-rose-500 animate-spin" />
-        ) : (
-          hasMore && (
-            <button
-              onClick={loadMore}
-              className="px-6 py-2.5 rounded-xl bg-zinc-900 border border-zinc-800 text-sm font-semibold text-zinc-200 hover:bg-zinc-800 hover:text-white transition-colors"
-            >
-              Load more
-            </button>
-          )
-        )}
-      </div>
+      {!loading && hasMore && (
+        <div className="flex justify-center pt-2">
+          <button
+            onClick={loadMore}
+            className="px-6 py-2.5 rounded-full bg-white/[0.06] ring-1 ring-inset ring-white/10 text-sm font-medium text-zinc-200 hover:bg-white/10 hover:text-white transition-colors"
+          >
+            Show more
+          </button>
+        </div>
+      )}
     </div>
   );
 };

@@ -116,9 +116,9 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({ media: baseM
             <Film className="w-12 h-12" />
           </div>
         )}
-        <div className="absolute inset-0 bg-gradient-to-t from-zinc-900 via-zinc-900/50 to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-t from-[#111114] via-[#111114]/60 to-transparent" />
         <div className="absolute bottom-5 left-6 right-6">
-          <h2 className="text-2xl sm:text-4xl font-extrabold text-white tracking-tight">{media.title}</h2>
+          <h2 className="font-display text-3xl sm:text-5xl font-bold text-white tracking-tight leading-none text-balance">{media.title}</h2>
           <div className="mt-2 flex items-center gap-3 text-sm text-zinc-300 flex-wrap">
             {year && <span>{year}</span>}
             {media.duration ? <span>{media.duration} min</span> : null}
@@ -139,7 +139,7 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({ media: baseM
           <button
             onClick={() => best && play(best)}
             disabled={loading || !best}
-            className="w-full sm:w-auto inline-flex items-center justify-center gap-2.5 px-8 py-3.5 rounded-2xl bg-rose-600 hover:bg-rose-500 disabled:bg-zinc-800 disabled:text-zinc-400 text-white text-base font-bold shadow-lg shadow-rose-600/20 transition-colors"
+            className="w-full sm:w-auto inline-flex items-center justify-center gap-2.5 px-8 py-3.5 rounded-full bg-white hover:bg-zinc-200 disabled:bg-zinc-800 disabled:text-zinc-400 text-black text-base font-semibold shadow-xl shadow-black/40 active:scale-[0.98] transition-all"
           >
             {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Play className="w-5 h-5 fill-current" />}
             {loading ? 'Finding streams…' : best ? playLabel : 'No streams found'}
@@ -151,7 +151,7 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({ media: baseM
           )}
           {!loading && !best && (
             <p className="text-xs text-zinc-500">
-              Nothing to stream yet. Add more indexers in Settings, or paste a magnet link with “Stream Magnet”.
+              Nothing to stream yet. Add more sources in Settings and try again.
             </p>
           )}
         </div>
@@ -174,14 +174,14 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({ media: baseM
         {isSeries && seasons.length > 0 && (
           <div className="space-y-3">
             <div className="flex items-center justify-between gap-3">
-              <h3 className="text-sm font-bold text-white">Episodes</h3>
+              <h3 className="font-display text-lg font-semibold text-white">Episodes</h3>
               <select
                 value={season}
                 onChange={(e) => {
                   const next = seasons.find((s) => s.seasonNumber === Number(e.target.value));
                   selectEpisode(Number(e.target.value), next?.episodes[0]?.episodeNumber || 1);
                 }}
-                className="bg-zinc-800 border border-zinc-700 text-sm text-white rounded-lg px-3 py-1.5 focus:outline-none focus:border-rose-500"
+                className="bg-white/[0.06] ring-1 ring-inset ring-white/10 text-sm text-white rounded-full px-3.5 py-1.5 outline-none focus:ring-white/25 [&>option]:bg-zinc-900"
                 aria-label="Season"
               >
                 {seasons.map((s) => (
@@ -191,7 +191,7 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({ media: baseM
                 ))}
               </select>
             </div>
-            <div className="divide-y divide-zinc-800 border border-zinc-800 rounded-2xl overflow-hidden">
+            <div className="divide-y divide-white/[0.06] ring-1 ring-inset ring-white/[0.08] rounded-2xl overflow-hidden bg-white/[0.02]">
               {currentSeason?.episodes.map((ep) => {
                 const active = ep.episodeNumber === episode;
                 return (
@@ -223,7 +223,7 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({ media: baseM
               {showAllSources ? 'Hide other sources' : `Choose another source (${ranked.length - 1})`}
             </button>
             {showAllSources && (
-              <div className="mt-3 divide-y divide-zinc-800 border border-zinc-800 rounded-2xl overflow-hidden">
+              <div className="mt-3 divide-y divide-white/[0.06] ring-1 ring-inset ring-white/[0.08] rounded-2xl overflow-hidden bg-white/[0.02]">
                 {ranked.slice(1, 31).map((source) => (
                   <button
                     key={source.id}

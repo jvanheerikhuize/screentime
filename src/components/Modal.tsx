@@ -50,16 +50,16 @@ export const Modal: React.FC<ModalProps> = ({ onClose, children, maxWidth = 'max
       role="dialog"
       aria-modal="true"
       aria-label={label}
-      className="fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/80 backdrop-blur-sm"
+      className="fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/75 backdrop-blur-md animate-[fade-in_200ms_ease-out]"
       onMouseDown={closeOnBackdrop}
     >
       <div className="min-h-full flex items-start sm:items-center justify-center p-3 sm:p-8" onMouseDown={closeOnBackdrop}>
-        <div className={`relative w-full ${maxWidth} bg-zinc-900 border border-zinc-800 rounded-3xl shadow-2xl`}>
+        <div className={`relative w-full ${maxWidth} bg-[#111114] ring-1 ring-white/10 rounded-3xl shadow-2xl shadow-black/70 animate-[dialog-in_260ms_cubic-bezier(0.16,1,0.3,1)]`}>
           <div className="sticky top-0 z-30 h-0 flex justify-end items-start">
             <button
               onClick={onClose}
               aria-label="Close"
-              className="mt-3 mr-3 p-2.5 rounded-full bg-zinc-950/85 hover:bg-zinc-800 text-zinc-200 hover:text-white border border-zinc-700/70 shadow-lg transition-colors"
+              className="mt-3 mr-3 p-2.5 rounded-full bg-black/50 hover:bg-black/70 backdrop-blur-md text-zinc-100 hover:text-white ring-1 ring-white/15 shadow-lg transition-colors"
             >
               <X className="w-5 h-5" />
             </button>

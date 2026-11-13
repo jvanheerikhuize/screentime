@@ -48,7 +48,7 @@ export async function GET() {
   const rows: CatalogRow[] = [
     {
       key: 'trending',
-      title: 'Trending & Popular Streams',
+      title: 'Trending now',
       subtitle: hasTmdb ? 'Trending this week on TMDB' : 'What people are watching right now',
       items: hasTmdb ? tmdbTrending : interleave(movies, series).slice(0, ROW_LIMIT),
     },
