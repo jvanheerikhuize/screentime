@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { Play, Globe, Tv, Search, MapPin, Clock } from 'lucide-react';
+import { Play, Search, MapPin, Clock } from 'lucide-react';
 import { LiveChannel } from '@/types';
 import { PageHeader } from '@/components/PageHeader';
 
@@ -32,15 +32,9 @@ function browserCountry(): string | undefined {
   return undefined;
 }
 
-const chip = (active: boolean) =>
-  `px-3.5 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors ${
-    active ? 'bg-white text-zinc-950' : 'bg-white/[0.05] text-zinc-300 ring-1 ring-inset ring-white/[0.08] hover:bg-white/10 hover:text-white'
-  }`;
-
 export const LiveChannelsGrid: React.FC<LiveChannelsGridProps> = ({ onPlayChannel }) => {
   const [channels, setChannels] = useState<LiveChannel[] | null>(null);
   const [country, setCountry] = useState<string>(ALL);
-  const [newsOnly, setNewsOnly] = useState(false);
   const [query, setQuery] = useState('');
   const [limit, setLimit] = useState(PAGE);
   // Which streams are reachable right now (checked on the server, in batches as they scroll into the list).
@@ -67,15 +61,9 @@ export const LiveChannelsGrid: React.FC<LiveChannelsGridProps> = ({ onPlayChanne
     };
   }, []);
 
-  const curated = useMemo(
-    () => (channels || []).filter((c) => c.source === 'curated' && status[c.streamUrl] !== 'offline'),
-    [channels, status]
-  );
-
   const countries = useMemo(() => {
     const counts = new Map<string, { name: string; count: number }>();
     for (const c of channels || []) {
-      if (c.source !== 'freetv') continue;
       const key = regionKey(c);
       const entry = counts.get(key) || { name: key === INTL ? 'International' : c.country, count: 0 };
       entry.count++;
@@ -87,12 +75,10 @@ export const LiveChannelsGrid: React.FC<LiveChannelsGridProps> = ({ onPlayChanne
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return (channels || [])
-      .filter((c) => c.source === 'freetv')
       .filter((c) => country === ALL || regionKey(c) === country)
-      .filter((c) => !newsOnly || c.category === 'News')
       .filter((c) => !q || c.name.toLowerCase().includes(q) || c.country.toLowerCase().includes(q))
       .sort((a, b) => Number(Boolean(a.geoBlocked)) - Number(Boolean(b.geoBlocked)));
-  }, [channels, country, newsOnly, query]);
+  }, [channels, country, query]);
 
   const offlineCount = filtered.filter((c) => status[c.streamUrl] === 'offline').length;
   const shown = useMemo(() => {
@@ -100,11 +86,11 @@ export const LiveChannelsGrid: React.FC<LiveChannelsGridProps> = ({ onPlayChanne
     return filtered.filter((c) => showOffline || status[c.streamUrl] !== 'offline').sort((a, b) => rank(a) - rank(b));
   }, [filtered, status, showOffline]);
 
-  // Check the channels on screen (plus the featured ones) that haven't been checked yet.
-  const pending = useMemo(() => {
-    const visible = [...(channels || []).filter((c) => c.source === 'curated'), ...shown.slice(0, limit)];
-    return visible.map((c) => c.streamUrl).filter((u) => !(u in status));
-  }, [channels, shown, limit, status]);
+  // Check the channels on screen that haven't been checked yet.
+  const pending = useMemo(
+    () => shown.slice(0, limit).map((c) => c.streamUrl).filter((u) => !(u in status)),
+    [shown, limit, status]
+  );
   const pendingKey = pending.slice(0, 60).join('|');
   useEffect(() => {
     if (!pendingKey) return;
@@ -143,23 +129,11 @@ export const LiveChannelsGrid: React.FC<LiveChannelsGridProps> = ({ onPlayChanne
         description="Free-to-air broadcasters and free ad-supported channels from around the world."
       />
 
-      {/* Featured, hand-picked channels */}
-      {!query && (
-        <section className="mb-12">
-          <h2 className="font-display text-lg sm:text-xl font-semibold text-white mb-4">Featured</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
-            {channels === null
-              ? Array.from({ length: 4 }).map((_, i) => <div key={i} className="aspect-[4/3] rounded-2xl skeleton" />)
-              : curated.map((channel) => <FeaturedCard key={channel.id} channel={channel} onPlay={onPlayChannel} />)}
-          </div>
-        </section>
-      )}
-
       {/* All channels */}
       <section>
         <div className="flex flex-wrap items-end justify-between gap-3 mb-4">
           <div>
-            <h2 className="font-display text-lg sm:text-xl font-semibold text-white">All channels</h2>
+            <h2 className="font-display text-lg sm:text-xl font-semibold text-white">Channels</h2>
             {channels !== null && (
               <p className="text-xs text-zinc-500 mt-0.5">
                 {filtered.length - offlineCount} channel{filtered.length - offlineCount === 1 ? '' : 's'} in {countryLabel}
@@ -201,9 +175,6 @@ export const LiveChannelsGrid: React.FC<LiveChannelsGridProps> = ({ onPlayChanne
                 </option>
               ))}
             </select>
-            <button onClick={() => setNewsOnly((n) => !n)} className={chip(newsOnly)}>
-              News
-            </button>
           </div>
         </div>
 
@@ -236,49 +207,13 @@ export const LiveChannelsGrid: React.FC<LiveChannelsGridProps> = ({ onPlayChanne
   );
 };
 
-const FeaturedCard: React.FC<{ channel: LiveChannel; onPlay: (c: LiveChannel) => void }> = ({ channel, onPlay }) => (
-  <button
-    onClick={() => onPlay(channel)}
-    className="group text-left rounded-2xl overflow-hidden bg-white/[0.03] ring-1 ring-inset ring-white/[0.07] hover:ring-white/20 hover:bg-white/[0.05] transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl hover:shadow-black/50"
-  >
-    <div className="relative aspect-video overflow-hidden bg-gradient-to-br from-zinc-800 via-zinc-900 to-rose-950/40">
-      <Tv className="absolute inset-0 m-auto w-10 h-10 text-white/15" />
-      <img
-        src={channel.logo}
-        alt=""
-        onError={(e) => (e.currentTarget.style.display = 'none')}
-        className="relative w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-      />
-      <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" />
-      <span className="absolute top-3 left-3 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-bold uppercase tracking-wider shadow-lg shadow-rose-900/40">
-        <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
-        Live
-      </span>
-      <span className="absolute top-3 right-3 px-2 py-0.5 rounded-full bg-black/50 backdrop-blur-md text-[10px] font-medium text-zinc-200">{channel.country}</span>
-      <span className="absolute bottom-3 right-3 w-10 h-10 rounded-full bg-white text-black flex items-center justify-center shadow-xl opacity-0 translate-y-2 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-300">
-        <Play className="w-4 h-4 fill-current ml-0.5" />
-      </span>
-    </div>
-    <div className="p-4">
-      <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">{channel.category}</p>
-      <h3 className="mt-1 font-display text-base font-semibold text-white truncate">{channel.name}</h3>
-      <p className="mt-1 text-xs text-zinc-400 line-clamp-2 leading-relaxed">{channel.description}</p>
-      {channel.language && (
-        <p className="mt-3 inline-flex items-center gap-1 text-[11px] text-zinc-500">
-          <Globe className="w-3 h-3" />
-          {channel.language}
-        </p>
-      )}
-    </div>
-  </button>
-);
-
 const LogoCard: React.FC<{ channel: LiveChannel; status?: 'ok' | 'offline'; onPlay: (c: LiveChannel) => void }> = ({
   channel,
   status,
   onPlay,
 }) => {
-  const [broken, setBroken] = useState(!channel.logo);
+  // Hand-picked channels carry artwork rather than a logo, so they're shown by name.
+  const [broken, setBroken] = useState(!channel.logo || channel.source === 'curated');
   return (
     <button onClick={() => onPlay(channel)} className={`group text-left ${status === 'offline' ? 'opacity-40' : ''}`} title={channel.name}>
       <div className="relative aspect-[4/3] rounded-xl overflow-hidden bg-gradient-to-br from-zinc-800/80 to-zinc-900 ring-1 ring-inset ring-white/[0.07] group-hover:ring-white/25 transition-all duration-300 group-hover:-translate-y-0.5 flex items-center justify-center p-5">
