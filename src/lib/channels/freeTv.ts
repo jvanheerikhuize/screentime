@@ -1,4 +1,4 @@
-import { LiveChannel } from '@/types';
+import type { LiveChannel } from '@/types';
 
 /**
  * Free-TV/IPTV (github.com/Free-TV/IPTV): a curated playlist of free, officially
