@@ -2,11 +2,12 @@
 // doesn't hammer upstream services on every page load.
 const TTL_MS = 30 * 60 * 1000;
 const MAX_ENTRIES = 500;
-const store = new Map<string, { expires: number; value: any }>();
+const store = new Map<string, { expires: number; value: unknown }>();
 
-export async function cachedJson(url: string, timeoutMs = 10000): Promise<any | null> {
+/** GETs JSON through the cache. `T` describes the expected shape; fields may still be missing. */
+export async function cachedJson<T>(url: string, timeoutMs = 10000): Promise<T | null> {
   const hit = store.get(url);
-  if (hit && hit.expires > Date.now()) return hit.value;
+  if (hit && hit.expires > Date.now()) return hit.value as T;
 
   try {
     const res = await fetch(url, {
@@ -15,7 +16,7 @@ export async function cachedJson(url: string, timeoutMs = 10000): Promise<any | 
       cache: 'no-store',
     });
     if (!res.ok) return null;
-    const value = await res.json();
+    const value = (await res.json()) as T;
 
     if (store.size >= MAX_ENTRIES) {
       const oldest = store.keys().next().value;
@@ -23,8 +24,8 @@ export async function cachedJson(url: string, timeoutMs = 10000): Promise<any | 
     }
     store.set(url, { expires: Date.now() + TTL_MS, value });
     return value;
-  } catch (e: any) {
-    console.warn(`[catalog] fetch failed for ${url}: ${e?.message || e}`);
+  } catch (e) {
+    console.warn(`[catalog] fetch failed for ${url}: ${e instanceof Error ? e.message : e}`);
     return null;
   }
 }

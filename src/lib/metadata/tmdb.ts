@@ -306,6 +306,33 @@ export const SAMPLE_MEDIA_CATALOG: MediaItem[] = [
 const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
 const TMDB_IMG_URL = 'https://image.tmdb.org/t/p';
 
+/** Item in TMDB list responses (trending, search). */
+interface TmdbListItem {
+  id: number;
+  media_type?: string;
+  title?: string;
+  name?: string;
+  original_title?: string;
+  original_name?: string;
+  overview?: string;
+  poster_path?: string | null;
+  backdrop_path?: string | null;
+  release_date?: string;
+  first_air_date?: string;
+  vote_average?: number;
+  vote_count?: number;
+}
+
+/** TMDB movie/tv details with videos and external ids appended. */
+interface TmdbDetails extends TmdbListItem {
+  imdb_id?: string | null;
+  external_ids?: { imdb_id?: string | null };
+  videos?: { results?: { type?: string; site?: string; key?: string }[] };
+  genres?: { name: string }[];
+  runtime?: number;
+  episode_run_time?: number[];
+}
+
 export class TMDBService {
   private apiKey: string;
 
@@ -321,8 +348,8 @@ export class TMDBService {
     try {
       const res = await fetch(`${TMDB_BASE_URL}/trending/${mediaType}/${timeWindow}?api_key=${this.apiKey}`);
       if (!res.ok) throw new Error(`TMDB error: ${res.statusText}`);
-      const data = await res.json();
-      return this.transformTMDBList(data.results);
+      const data: { results?: TmdbListItem[] } = await res.json();
+      return this.transformTMDBList(data.results || []);
     } catch (e) {
       console.warn('[TMDBService] Failed to fetch trending, returning fallback catalog:', e);
       return SAMPLE_MEDIA_CATALOG;
@@ -339,8 +366,8 @@ export class TMDBService {
     try {
       const res = await fetch(`${TMDB_BASE_URL}/search/multi?api_key=${this.apiKey}&query=${encodeURIComponent(query)}`);
       if (!res.ok) throw new Error(`TMDB error: ${res.statusText}`);
-      const data = await res.json();
-      return this.transformTMDBList(data.results.filter((i: any) => i.media_type === 'movie' || i.media_type === 'tv'));
+      const data: { results?: TmdbListItem[] } = await res.json();
+      return this.transformTMDBList((data.results || []).filter((i) => i.media_type === 'movie' || i.media_type === 'tv'));
     } catch (e) {
       console.warn('[TMDBService] Search error:', e);
       return [];
@@ -365,11 +392,11 @@ export class TMDBService {
     try {
       const res = await fetch(`${TMDB_BASE_URL}/${mediaType}/${id}?api_key=${this.apiKey}&append_to_response=videos,credits,external_ids`);
       if (!res.ok) return null;
-      const data = await res.json();
+      const data: TmdbDetails = await res.json();
 
       let trailerUrl = '';
       if (data.videos?.results?.length) {
-        const trailer = data.videos.results.find((v: any) => v.type === 'Trailer' && v.site === 'YouTube') || data.videos.results[0];
+        const trailer = data.videos.results.find((v) => v.type === 'Trailer' && v.site === 'YouTube') || data.videos.results[0];
         if (trailer) trailerUrl = `https://www.youtube.com/watch?v=${trailer.key}`;
       }
 
@@ -379,7 +406,7 @@ export class TMDBService {
         id: data.id,
         tmdbId: data.id,
         imdbId: imdbId || undefined,
-        title: data.title || data.name,
+        title: data.title || data.name || '',
         originalTitle: data.original_title || data.original_name,
         overview: data.overview || '',
         posterPath: data.poster_path ? `${TMDB_IMG_URL}/w780${data.poster_path}` : null,
@@ -389,7 +416,7 @@ export class TMDBService {
         firstAirDate: data.first_air_date,
         voteAverage: data.vote_average || 0,
         voteCount: data.vote_count || 0,
-        genres: (data.genres || []).map((g: any) => g.name),
+        genres: (data.genres || []).map((g) => g.name),
         duration: data.runtime || (data.episode_run_time ? data.episode_run_time[0] : undefined),
         trailerUrl,
       };
@@ -399,11 +426,11 @@ export class TMDBService {
     }
   }
 
-  private transformTMDBList(results: any[]): MediaItem[] {
+  private transformTMDBList(results: TmdbListItem[]): MediaItem[] {
     return results.map((item) => ({
       id: item.id,
       tmdbId: item.id,
-      title: item.title || item.name,
+      title: item.title || item.name || '',
       originalTitle: item.original_title || item.original_name,
       overview: item.overview || '',
       posterPath: item.poster_path ? `${TMDB_IMG_URL}/w500${item.poster_path}` : null,
