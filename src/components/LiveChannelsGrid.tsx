@@ -42,7 +42,7 @@ export const LiveChannelsGrid: React.FC<LiveChannelsGridProps> = ({ onPlayChanne
         </div>
 
         {/* Categories */}
-        <div className="flex gap-1.5 overflow-x-auto pb-1 bg-zinc-950 p-1 rounded-xl border border-zinc-800">
+        <div className="flex gap-1.5 overflow-x-auto no-scrollbar bg-zinc-950 p-1 rounded-xl border border-zinc-800">
           {categories.map((cat) => (
             <button
               key={cat}

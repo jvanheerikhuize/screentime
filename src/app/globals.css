@@ -20,6 +20,17 @@ body {
   font-family: var(--font-geist-sans), system-ui, sans-serif;
 }
 
+/* Horizontal carousels and chip rows scroll by swipe/arrows without a visible scrollbar. */
+.no-scrollbar,
+.scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar,
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
 /* Subtitles: readable on any scene. */
 video::cue {
   background: rgba(0, 0, 0, 0.6);
