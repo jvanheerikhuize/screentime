@@ -1,19 +1,29 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Play, Info, Star } from 'lucide-react';
+import { Play, Info, Star, Shuffle, Heart } from 'lucide-react';
 import { MediaItem } from '@/types';
 
 interface HeroBannerProps {
   media: MediaItem | null;
   onPlay: (media: MediaItem) => void;
   onMoreInfo: (media: MediaItem) => void;
+  onShuffle?: () => void;
+  isLiked?: boolean;
+  onToggleLike?: (media: MediaItem) => void;
 }
 
 const HERO_HEIGHT = 'h-[72vh] min-h-[520px] max-h-[820px]';
 
 /** Full-bleed featured title. Renders a skeleton while `media` is null. */
-export const HeroBanner: React.FC<HeroBannerProps> = ({ media, onPlay, onMoreInfo }) => {
+export const HeroBanner: React.FC<HeroBannerProps> = ({
+  media,
+  onPlay,
+  onMoreInfo,
+  onShuffle,
+  isLiked = false,
+  onToggleLike,
+}) => {
   const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
 
   if (!media) {
@@ -87,7 +97,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({ media, onPlay, onMoreInf
             <p className="text-zinc-300/90 text-sm sm:text-base leading-relaxed line-clamp-3 max-w-lg">{media.overview}</p>
           )}
 
-          <div className="flex items-center gap-3 pt-2">
+          <div className="flex flex-wrap items-center gap-3 pt-2">
             <button
               onClick={() => onPlay(media)}
               className="inline-flex items-center gap-2 pl-5 pr-6 py-3 rounded-full bg-white text-black font-semibold text-sm sm:text-base shadow-xl shadow-black/30 hover:bg-zinc-200 active:scale-[0.97] transition-all"
@@ -102,6 +112,31 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({ media, onPlay, onMoreInf
               <Info className="w-5 h-5" />
               More info
             </button>
+            {onToggleLike && (
+              <button
+                onClick={() => onToggleLike(media)}
+                title={isLiked ? 'Remove from Liked' : 'Like this title (improves recommendations)'}
+                aria-label={isLiked ? 'Unlike title' : 'Like title'}
+                className={`p-3 rounded-full backdrop-blur-xl ring-1 active:scale-[0.97] transition-all ${
+                  isLiked
+                    ? 'bg-rose-500/25 text-rose-400 ring-rose-500/40 hover:bg-rose-500/35'
+                    : 'bg-white/10 hover:bg-white/20 text-white ring-white/15'
+                }`}
+              >
+                <Heart className={`w-5 h-5 ${isLiked ? 'fill-current' : ''}`} />
+              </button>
+            )}
+            {onShuffle && (
+              <button
+                onClick={onShuffle}
+                title="Surprise me with another recommendation"
+                aria-label="Surprise me"
+                className="inline-flex items-center gap-2 px-4 py-3 rounded-full bg-white/10 hover:bg-white/20 text-zinc-200 hover:text-white font-medium text-sm backdrop-blur-xl ring-1 ring-white/15 active:scale-[0.97] transition-all"
+              >
+                <Shuffle className="w-4 h-4" />
+                Surprise me
+              </button>
+            )}
           </div>
         </div>
       </div>

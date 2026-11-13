@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { Play, Star, Film, ChevronDown, Loader2, Users, HardDrive, CalendarClock } from 'lucide-react';
+import { Play, Star, Film, ChevronDown, Loader2, Users, HardDrive, CalendarClock, Heart } from 'lucide-react';
 import { MediaItem, StreamSource } from '@/types';
 import { Modal } from './Modal';
 import { rankSources } from '@/lib/streaming/pickSource';
@@ -28,6 +28,8 @@ interface MediaDetailModalProps {
   onClose: () => void;
   /** `sources` is the chosen source first, then fallbacks the player may switch to. */
   onPlaySource: (sources: StreamSource[], media: MediaItem, context: PlaybackContext) => void;
+  isLiked?: boolean;
+  onToggleLike?: (media: MediaItem) => void;
 }
 
 /** Stream lookup request; indexer credentials travel as headers so they stay out of URLs and logs. */
@@ -65,7 +67,13 @@ function sourceSummary(source: StreamSource): string {
     .join(' · ');
 }
 
-export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({ media: baseMedia, onClose, onPlaySource }) => {
+export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
+  media: baseMedia,
+  onClose,
+  onPlaySource,
+  isLiked = false,
+  onToggleLike,
+}) => {
   const [details, setDetails] = useState<Partial<MediaItem> | null>(null);
   const [sources, setSources] = useState<StreamSource[]>([]);
   const [loading, setLoading] = useState(true);
@@ -202,14 +210,31 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({ media: baseM
       <div className="p-6 sm:p-8 space-y-6">
         {/* Primary action */}
         <div className="space-y-2">
-          <button
-            onClick={() => best && play(best)}
-            disabled={loading || !best}
-            className="w-full sm:w-auto inline-flex items-center justify-center gap-2.5 px-8 py-3.5 rounded-full bg-white hover:bg-zinc-200 disabled:bg-zinc-800 disabled:text-zinc-400 text-black text-base font-semibold shadow-xl shadow-black/40 active:scale-[0.98] transition-all"
-          >
-            {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Play className="w-5 h-5 fill-current" />}
-            {loading ? 'Finding streams…' : best ? playLabel : 'No streams found'}
-          </button>
+          <div className="flex items-center gap-3 flex-wrap">
+            <button
+              onClick={() => best && play(best)}
+              disabled={loading || !best}
+              className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-2.5 px-8 py-3.5 rounded-full bg-white hover:bg-zinc-200 disabled:bg-zinc-800 disabled:text-zinc-400 text-black text-base font-semibold shadow-xl shadow-black/40 active:scale-[0.98] transition-all"
+            >
+              {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Play className="w-5 h-5 fill-current" />}
+              {loading ? 'Finding streams…' : best ? playLabel : 'No streams found'}
+            </button>
+            {onToggleLike && (
+              <button
+                onClick={() => onToggleLike(media)}
+                aria-pressed={isLiked}
+                title={isLiked ? 'Remove from liked titles' : 'Add to liked titles'}
+                className={`inline-flex items-center justify-center gap-2 px-5 py-3.5 rounded-full text-sm font-semibold border transition-all active:scale-[0.98] ${
+                  isLiked
+                    ? 'bg-rose-500/20 border-rose-500/50 text-rose-200 hover:bg-rose-500/30'
+                    : 'bg-white/[0.06] border-white/10 text-zinc-200 hover:bg-white/15 hover:text-white'
+                }`}
+              >
+                <Heart className={`w-4 h-4 ${isLiked ? 'fill-rose-400 text-rose-400' : ''}`} />
+                {isLiked ? 'Liked' : 'Like'}
+              </button>
+            )}
+          </div>
           {!loading && best && (
             <p className="text-xs text-zinc-500">
               Best of {ranked.length} source{ranked.length === 1 ? '' : 's'}: {sourceSummary(best)}

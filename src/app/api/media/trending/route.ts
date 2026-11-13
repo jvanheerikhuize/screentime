@@ -78,8 +78,9 @@ export async function GET() {
     },
   ].filter((r) => r.items.length > 0);
 
-  // Feature a popular movie with real artwork; fall back to the curated hero.
-  const featured = movies.find((m) => m.backdropPath && m.overview && m.imdbId) || FEATURED_HERO;
+  // Feature a random popular movie/series with real artwork; fall back to the curated hero.
+  const heroPool = [...topMovies, ...movies, ...topSeries, ...series].filter((m) => m.backdropPath && m.overview && m.imdbId);
+  const featured = heroPool.length > 0 ? heroPool[Math.floor(Math.random() * Math.min(20, heroPool.length))] : FEATURED_HERO;
 
   return NextResponse.json(
     {

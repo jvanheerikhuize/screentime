@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { Shuffle, Sparkles } from 'lucide-react';
 import { Navbar, AppTab } from '@/components/Navbar';
 import { HeroBanner } from '@/components/HeroBanner';
 import { MediaCarousel, CarouselSkeleton } from '@/components/MediaCarousel';
@@ -14,6 +15,18 @@ import { PageHeader } from '@/components/PageHeader';
 import { MediaItem, StreamSource, LiveChannel } from '@/types';
 import { FEATURED_HERO, SAMPLE_MEDIA_CATALOG } from '@/lib/metadata/tmdb';
 import { OPEN_SOURCE_STREAMS } from '@/lib/streaming/streamSources';
+import {
+  getTasteProfile,
+  isMediaLiked,
+  personalizeRows,
+  pickRandomHero,
+  POPULAR_TASTE_GENRES,
+  recordMediaInteraction,
+  rememberHeroId,
+  TasteProfile,
+  toggleFavoriteGenre,
+  toggleLikedMedia,
+} from '@/lib/tasteProfile';
 
 interface CatalogRow {
   key: string;
@@ -43,7 +56,9 @@ function fallbackHome(data?: { featured?: MediaItem; trending?: MediaItem[]; mov
 export default function Home() {
   const [activeTab, setActiveTab] = useState<AppTab>('home');
   const [activeGenre, setActiveGenre] = useState<string | null>(null);
+  const [rawRows, setRawRows] = useState<CatalogRow[]>([]);
   const [home, setHome] = useState<HomeData | null>(null);
+  const [taste, setTaste] = useState<TasteProfile>(() => getTasteProfile());
 
   const [selectedMedia, setSelectedMedia] = useState<MediaItem | null>(null);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
@@ -104,20 +119,65 @@ export default function Home() {
     fetch('/api/media/trending')
       .then((res) => res.json())
       .then((data) => {
-        const nextHome =
+        const base =
           Array.isArray(data.rows) && data.rows.length > 0
-            ? { featured: data.featured ?? data.rows[0].items[0] ?? null, rows: data.rows }
+            ? { featured: data.featured ?? data.rows[0].items[0] ?? null, rows: data.rows as CatalogRow[] }
             : fallbackHome(data);
+        const currentTaste = getTasteProfile();
+        setRawRows(base.rows);
+        const hero = pickRandomHero(base.rows, currentTaste) ?? base.featured;
+        const updatedTaste = hero ? rememberHeroId(hero.id) : currentTaste;
+        setTaste(updatedTaste);
+        const nextHome: HomeData = {
+          featured: hero,
+          rows: personalizeRows(base.rows, updatedTaste),
+        };
         setHome(nextHome);
         applyUrlParams(nextHome);
       })
       .catch((err) => {
         console.error('Failed to load catalog:', err);
         const fallback = fallbackHome();
+        setRawRows(fallback.rows);
         setHome(fallback);
         applyUrlParams(fallback);
       });
   }, [applyUrlParams]);
+
+  const shuffleHome = useCallback(
+    (profileOverride?: TasteProfile) => {
+      if (!rawRows.length) return;
+      const activeProfile = profileOverride ?? getTasteProfile();
+      const nextHero = pickRandomHero(rawRows, activeProfile, home?.featured?.id) ?? home?.featured ?? null;
+      const updatedProfile = nextHero ? rememberHeroId(nextHero.id) : activeProfile;
+      setTaste(updatedProfile);
+      setHome({
+        featured: nextHero,
+        rows: personalizeRows(rawRows, updatedProfile),
+      });
+    },
+    [rawRows, home?.featured]
+  );
+
+  const handleToggleFavoriteGenre = (genre: string) => {
+    const nextProfile = toggleFavoriteGenre(genre);
+    shuffleHome(nextProfile);
+  };
+
+  const handleToggleLike = (media: MediaItem) => {
+    const { profile: nextProfile } = toggleLikedMedia(media);
+    setTaste(nextProfile);
+    if (rawRows.length) {
+      setHome((prev) =>
+        prev
+          ? {
+              ...prev,
+              rows: personalizeRows(rawRows, nextProfile),
+            }
+          : prev
+      );
+    }
+  };
 
   const switchTab = (tab: AppTab) => {
     setActiveTab(tab);
@@ -127,6 +187,10 @@ export default function Home() {
   };
 
   const selectMedia = (media: MediaItem | null) => {
+    if (media) {
+      const nextProfile = recordMediaInteraction(media, 1);
+      setTaste(nextProfile);
+    }
     setSelectedMedia(media);
     updateUrl(activeTab, activeGenre, media);
   };
@@ -144,9 +208,10 @@ export default function Home() {
   const handlePlaySource = (sources: StreamSource[], media: MediaItem, context: PlaybackContext) => {
     const playable = toPlayable(sources);
     if (!playable.length) return;
+    const nextProfile = recordMediaInteraction(media, 3);
+    setTaste(nextProfile);
     selectMedia(null);
     const episodeTag = context.season ? ` · S${context.season}E${context.episode}` : '';
-    // Anime episodes are numbered absolutely; subtitles use the mapped IMDb series and season.
     const subtitleQuery: SubtitleQuery | undefined = media.anime
       ? media.anime.imdbId
         ? { imdbId: media.anime.imdbId, mediaType: media.mediaType, season: media.anime.season ?? 1, episode: context.episode }
@@ -187,8 +252,49 @@ export default function Home() {
 
       {activeTab === 'home' ? (
         <main className="flex-1 pb-24">
-          <HeroBanner media={home?.featured ?? null} onPlay={handlePlayMedia} onMoreInfo={selectMedia} />
+          <HeroBanner
+            media={home?.featured ?? null}
+            onPlay={handlePlayMedia}
+            onMoreInfo={selectMedia}
+            onShuffle={() => shuffleHome()}
+            isLiked={home?.featured ? isMediaLiked(home.featured.id, taste) : false}
+            onToggleLike={handleToggleLike}
+          />
           <div className="relative z-10 -mt-8 sm:-mt-12 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 space-y-10 sm:space-y-12">
+            {/* Personalization & Shuffle Bar */}
+            <div className="flex flex-wrap items-center gap-2 pt-2">
+              <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-400 mr-1">
+                <Sparkles className="w-3.5 h-3.5 text-rose-400" />
+                Your taste:
+              </span>
+              {POPULAR_TASTE_GENRES.map((g) => {
+                const active = taste.favoriteGenres.includes(g);
+                return (
+                  <button
+                    key={g}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => handleToggleFavoriteGenre(g)}
+                    className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                      active
+                        ? 'bg-gradient-to-r from-rose-500 to-orange-400 text-white shadow-sm shadow-rose-950/50'
+                        : 'bg-white/[0.05] text-zinc-300 ring-1 ring-inset ring-white/[0.08] hover:bg-white/10 hover:text-white'
+                    }`}
+                  >
+                    {g}
+                  </button>
+                );
+              })}
+              <button
+                type="button"
+                onClick={() => shuffleHome()}
+                className="ml-auto inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-white/[0.07] hover:bg-white/15 text-xs font-medium text-zinc-200 hover:text-white ring-1 ring-inset ring-white/10 transition-colors"
+              >
+                <Shuffle className="w-3.5 h-3.5 text-rose-400" />
+                Shuffle picks
+              </button>
+            </div>
+
             {home
               ? home.rows.map((row) => (
                   <MediaCarousel
@@ -248,6 +354,8 @@ export default function Home() {
           media={selectedMedia}
           onClose={() => selectMedia(null)}
           onPlaySource={handlePlaySource}
+          isLiked={isMediaLiked(selectedMedia.id, taste)}
+          onToggleLike={handleToggleLike}
         />
       )}
 
