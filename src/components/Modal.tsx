@@ -34,6 +34,8 @@ export const Modal: React.FC<ModalProps> = ({ onClose, children, maxWidth = 'max
     }
 
     const handleClose = () => {
+      // Ignore stale asynchronous 'close' events if the dialog was re-opened (e.g. React StrictMode).
+      if (dialog.open) return;
       dialog.returnValue = '';
       onCloseRef.current();
     };
@@ -43,6 +45,7 @@ export const Modal: React.FC<ModalProps> = ({ onClose, children, maxWidth = 'max
     let cleanupLightDismiss: (() => void) | undefined;
     if (!('closedBy' in HTMLDialogElement.prototype)) {
       const outside = (e: PointerEvent) => {
+        if (e.target !== dialog) return false;
         const r = dialog.getBoundingClientRect();
         return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
       };
@@ -64,7 +67,6 @@ export const Modal: React.FC<ModalProps> = ({ onClose, children, maxWidth = 'max
     return () => {
       dialog.removeEventListener('close', handleClose);
       cleanupLightDismiss?.();
-      if (dialog.open) dialog.close();
     };
   }, []);
 
