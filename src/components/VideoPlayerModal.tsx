@@ -1,11 +1,12 @@
 'use client';
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  X, Play, Pause, Volume2, VolumeX, Maximize, Minimize, RotateCcw, RotateCw, Captions, AlertCircle, Check, SkipForward,
+  X, Play, Pause, Volume2, VolumeX, Maximize, Minimize, RotateCcw, RotateCw,
+  Captions, AlertCircle, Check, SkipForward, SkipBack, Layers, PictureInPicture2, Languages,
 } from 'lucide-react';
 import Hls from 'hls.js';
-import { getPreferredSubtitleLang, matchesLanguage, setPreferredSubtitleLang } from '@/lib/subtitleLanguages';
+import { formatLang, getPreferredSubtitleLang, matchesLanguage, setPreferredSubtitleLang } from '@/lib/subtitleLanguages';
 
 export interface SubtitleQuery {
   imdbId?: string;
@@ -25,6 +26,7 @@ export interface PlayableSource {
 interface VideoPlayerModalProps {
   title: string;
   sources: PlayableSource[];
+  initialSourceIndex?: number;
   isLive?: boolean;
   subtitleQuery?: SubtitleQuery;
   onClose: () => void;
@@ -35,6 +37,15 @@ interface SubtitleOption {
   lang: string;
   label: string;
   src: string;
+}
+
+interface ProbeStreamInfo {
+  index: number;
+  codec: string;
+  language?: string;
+  title?: string;
+  channels?: number;
+  isDefault: boolean;
 }
 
 interface PrepareStatus {
@@ -54,6 +65,7 @@ type Phase = 'preparing' | 'probing' | 'ready';
 type Mode = 'direct' | 'transcode';
 
 const VIDEO_FILE = /\.(mp4|mkv|webm|avi|mov|m4v|wmv|ts)$/i;
+const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 2] as const;
 // Seconds that must be available ahead before (re)starting after a stall; doubles per stall.
 const START_BUFFER_SECONDS = 15;
 const MAX_BUFFER_SECONDS = 60;
@@ -103,17 +115,25 @@ function bufferedAhead(video: HTMLVideoElement): number {
   return 0;
 }
 
-export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sources, isLive = false, subtitleQuery, onClose }) => {
+export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
+  title,
+  sources,
+  initialSourceIndex = 0,
+  isLive = false,
+  subtitleQuery,
+  onClose,
+}) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   // --- Source selection & pipeline state ---
-  const [sourceIndex, setSourceIndex] = useState(0);
+  const [sourceIndex, setSourceIndex] = useState(initialSourceIndex);
   const [fileOverride, setFileOverride] = useState<number | undefined>(undefined);
   const source = sources[sourceIndex];
   const magnet = source?.magnet;
   const isTorrent = Boolean(magnet);
   const fileIndex = fileOverride ?? source?.fileIdx;
+  const displayTitle = isLive && source?.label ? source.label : title;
 
   const [rawPhase, setPhase] = useState<Phase>(isTorrent ? 'preparing' : 'probing');
   const [mode, setMode] = useState<Mode>('direct');
@@ -121,6 +141,11 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sourc
   const [knownDuration, setKnownDuration] = useState(0);
   const [prepare, setPrepare] = useState<PrepareStatus | null>(null);
   const [reencoding, setReencoding] = useState(false);
+
+  // --- Audio & Embedded Subtitle tracks from ffprobe ---
+  const [audioStreams, setAudioStreams] = useState<ProbeStreamInfo[]>([]);
+  const [selectedAudioIndex, setSelectedAudioIndex] = useState<number | undefined>(undefined);
+  const [embeddedSubs, setEmbeddedSubs] = useState<SubtitleOption[]>([]);
 
   // --- Playback UI state ---
   const [isPlaying, setIsPlaying] = useState(false);
@@ -132,14 +157,20 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sourc
   const [bufferedEnd, setBufferedEnd] = useState(0);
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
+  const [playbackRate, setPlaybackRate] = useState<number>(1);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isPip, setIsPip] = useState(false);
+  const pipSupported = typeof document !== 'undefined' && Boolean(document.pictureInPictureEnabled);
   const [showControls, setShowControls] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const [subtitles, setSubtitles] = useState<SubtitleOption[]>([]);
-  const [activeSub, setActiveSub] = useState<SubtitleOption | null>(null);
+  const [externalSubs, setExternalSubs] = useState<SubtitleOption[]>([]);
+  const [userSubChoice, setUserSubChoice] = useState<SubtitleOption | 'off' | undefined>(undefined);
+  const [subtitleDelay, setSubtitleDelay] = useState(0); // seconds (+ delays subtitles, - advances them)
   const [subMenuOpen, setSubMenuOpen] = useState(false);
+  const [sourceMenuOpen, setSourceMenuOpen] = useState(false);
+  const [audioMenuOpen, setAudioMenuOpen] = useState(false);
 
   const wantPlay = useRef(true);
   const autoPausing = useRef(false);
@@ -149,6 +180,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sourc
   const sourceStartedAt = useRef(0);
   const bufferingSince = useRef(0);
   const resumeAt = useRef(0);
+  const lastTouchTap = useRef<{ time: number; x: number }>({ time: 0, x: 0 });
 
   // The film timeline: in transcode mode the <video> starts at 0 at `offset`.
   const base = mode === 'transcode' ? offset : 0;
@@ -170,7 +202,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sourc
   const [liveRelay, setLiveRelay] = useState(false);
   const activeUrl =
     mode === 'transcode'
-      ? `/api/playback/transcode?${sourceQuery}&start=${offset.toFixed(2)}`
+      ? `/api/playback/transcode?${sourceQuery}&start=${offset.toFixed(2)}${selectedAudioIndex !== undefined ? `&audioStream=${selectedAudioIndex}` : ''}`
       : isLive && liveRelay && /^https?:\/\//i.test(directUrl)
         ? `/api/live/proxy?u=${encodeURIComponent(directUrl)}`
         : directUrl;
@@ -205,11 +237,28 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sourc
     setPrepare(null);
     prepareRef.current = null;
     setReencoding(false);
+    setAudioStreams([]);
+    setSelectedAudioIndex(undefined);
+    setEmbeddedSubs([]);
+    setLiveRelay(false);
     setBuffering(true);
     setBufferTarget(START_BUFFER_SECONDS);
     setError(null);
     bufferingSince.current = 0;
   }, []);
+
+  const selectSource = useCallback(
+    (nextIdx: number, keepPosition: boolean, noticeMsg?: string) => {
+      if (nextIdx < 0 || nextIdx >= sources.length || nextIdx === sourceIndex) return;
+      resumeAt.current = keepPosition && !isLive ? filmTime() : 0;
+      if (noticeMsg) setNotice(noticeMsg);
+      setFileOverride(undefined);
+      setSourceIndex(nextIdx);
+      setSourceMenuOpen(false);
+      resetPipeline(Boolean(sources[nextIdx].magnet));
+    },
+    [sourceIndex, sources, isLive, resetPipeline]
+  );
 
   const tryNextSource = useCallback(
     (reason: string, keepPosition: boolean) => {
@@ -218,14 +267,9 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sourc
         setError(`${reason} No other sources are available for this title.`);
         return;
       }
-      resumeAt.current = keepPosition ? filmTime() : 0;
-      setNotice(`${reason} Switching to another source (${next + 1} of ${sources.length})…`);
-      setFileOverride(undefined);
-      setSourceIndex(next);
-      resetPipeline(Boolean(sources[next].magnet));
+      selectSource(next, keepPosition, `${reason} Switching to another source (${next + 1} of ${sources.length})…`);
     },
-     
-    [sourceIndex, sources, resetPipeline]
+    [sourceIndex, sources.length, selectSource]
   );
   const tryNextRef = useRef(tryNextSource);
   useEffect(() => {
@@ -234,7 +278,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sourc
 
   useEffect(() => {
     if (!notice) return;
-    const t = setTimeout(() => setNotice(null), 7000);
+    const t = setTimeout(() => setNotice(null), 6000);
     return () => clearTimeout(t);
   }, [notice]);
 
@@ -278,7 +322,6 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sourc
       cancelled = true;
       clearInterval(id);
     };
-     
   }, [magnet, sourceQuery]);
 
   // --- 2. Probe: can the browser play this file directly, or does it need converting? ---
@@ -293,6 +336,17 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sourc
         if (cancelled) return;
         const start = resumeAt.current;
         if (info?.duration) setKnownDuration(info.duration);
+        if (Array.isArray(info?.audioStreams)) setAudioStreams(info.audioStreams);
+        if (typeof info?.selectedAudioIndex === 'number') setSelectedAudioIndex(info.selectedAudioIndex);
+        if (Array.isArray(info?.subtitleStreams)) {
+          const emb: SubtitleOption[] = info.subtitleStreams.map((s: ProbeStreamInfo) => ({
+            id: `emb-${s.index}`,
+            lang: s.language || 'und',
+            label: `${formatLang(s.language || 'und')}${s.title ? ` (${s.title})` : ''} · Embedded`,
+            src: `/api/subtitles/embedded?${sourceQuery}&stream=${s.index}`,
+          }));
+          setEmbeddedSubs(emb);
+        }
         if (info && !info.directPlayable) {
           setMode('transcode');
           setOffset(start);
@@ -328,11 +382,8 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sourc
       hls = new Hls({ enableWorker: true, lowLatencyMode: true, backBufferLength: 90 });
       hls.loadSource(activeUrl);
       hls.attachMedia(video);
-      // Retry a few times, then say so instead of spinning forever (channels go off air).
       let networkRetries = 0;
       let mediaRetries = 0;
-      // Live channel that gets no picture within a few seconds (some servers block segments
-      // without a fatal error surfacing): retry through our relay.
       if (isLive && !liveRelay) {
         stallTimer = setTimeout(() => {
           if (video.readyState < 2) setLiveRelay(true);
@@ -341,7 +392,6 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sourc
       hls.on(Hls.Events.ERROR, (_e, data) => {
         if (!data.fatal) return;
         const manifestFailed = data.details === Hls.ErrorDetails.MANIFEST_LOAD_ERROR || data.details === Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT;
-        // First network failure on a live channel: retry through our relay (usually a CORS block).
         if (isLive && !liveRelay && data.type === Hls.ErrorTypes.NETWORK_ERROR) setLiveRelay(true);
         else if (data.type === Hls.ErrorTypes.NETWORK_ERROR && !manifestFailed && networkRetries++ < 3) hls?.startLoad();
         else if (data.type === Hls.ErrorTypes.MEDIA_ERROR && mediaRetries++ < 2) hls?.recoverMediaError();
@@ -364,9 +414,14 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sourc
     };
   }, [activeUrl, isLive, phase, liveRelay]);
 
+  // Keep video playbackRate synced across source/mode changes.
+  useEffect(() => {
+    if (videoRef.current && !isLive) {
+      videoRef.current.playbackRate = playbackRate;
+    }
+  }, [playbackRate, activeUrl, isLive]);
+
   // --- 4. Buffer gate: hold playback until enough is available ahead, then (re)start ---
-  // Chrome stops fetching a paused video after a few seconds, so for torrents we ask the server
-  // how much is downloaded from the current position, and otherwise accept "browser went idle".
   useEffect(() => {
     if (!buffering || phase !== 'ready') return;
     if (!bufferingSince.current) bufferingSince.current = Date.now();
@@ -390,7 +445,6 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sourc
         shown = Math.max(a, isFinite(serverAhead) ? serverAhead : bufferTarget);
         enough = nearEnd || serverAhead >= bufferTarget || a >= bufferTarget || (!bytesPerSec && browserIdle);
 
-        // A long stall on a swarm that can't keep up: move on, keeping the position.
         const tooSlow = bytesPerSec > 0 && !st?.complete && (st?.downloadSpeed || 0) < bytesPerSec * 0.9;
         if (!enough && tooSlow && isPlaying && Date.now() - bufferingSince.current > MAX_STALL_MS && sources.length > sourceIndex + 1) {
           tryNextRef.current('This source can’t keep up.', true);
@@ -408,7 +462,6 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sourc
       }
     }, 400);
     return () => clearInterval(id);
-     
   }, [buffering, phase, bufferTarget, isLive, magnet, isPlaying, sourceIndex, sources.length]);
 
   const onWaiting = () => {
@@ -432,7 +485,6 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sourc
       return;
     }
     if (mode === 'direct') {
-      // Browser rejected the file as-is: convert it (from the same position).
       const at = filmTime();
       setMode('transcode');
       setOffset(at);
@@ -442,7 +494,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sourc
     tryNextRef.current('This file couldn’t be played.', true);
   };
 
-  // --- 5. Subtitles ---
+  // --- 5. Subtitles (Embedded + OpenSubtitles) & Subtitle Delay ---
   useEffect(() => {
     if (!subtitleQuery?.imdbId) return;
     let cancelled = false;
@@ -456,12 +508,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sourc
       .then((r) => r.json())
       .then((data) => {
         if (cancelled) return;
-        const pref = getPreferredSubtitleLang();
-        // Preferred language first, then English, then the rest alphabetically (API order).
-        const rank = (s: SubtitleOption) => (matchesLanguage(s.lang, pref) ? 0 : s.lang === 'eng' ? 1 : 2);
-        const list: SubtitleOption[] = [...(data.subtitles || [])].sort((a, b) => rank(a) - rank(b));
-        setSubtitles(list);
-        setActiveSub(list.find((s) => matchesLanguage(s.lang, pref)) || null);
+        setExternalSubs(data.subtitles || []);
       })
       .catch(() => {});
     return () => {
@@ -469,7 +516,23 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sourc
     };
   }, [subtitleQuery]);
 
-  const subtitleSrc = activeSub ? `${activeSub.src}&offset=${base.toFixed(2)}` : '';
+  const subtitles = useMemo(() => {
+    const pref = getPreferredSubtitleLang();
+    const ext = subtitleQuery?.imdbId ? externalSubs : [];
+    const rank = (s: SubtitleOption) => (matchesLanguage(s.lang, pref) ? 0 : matchesLanguage(s.lang, 'en') ? 1 : 2);
+    return [...embeddedSubs, ...ext].sort((a, b) => rank(a) - rank(b));
+  }, [embeddedSubs, externalSubs, subtitleQuery?.imdbId]);
+
+  const activeSub = useMemo<SubtitleOption | null>(() => {
+    if (userSubChoice === 'off') return null;
+    if (userSubChoice && subtitles.some((s) => s.id === userSubChoice.id)) return userSubChoice;
+    const pref = getPreferredSubtitleLang();
+    if (pref === 'off') return null;
+    return subtitles.find((s) => matchesLanguage(s.lang, pref)) || null;
+  }, [userSubChoice, subtitles]);
+
+  const effectiveSubOffset = base - subtitleDelay;
+  const subtitleSrc = activeSub ? `${activeSub.src}&offset=${effectiveSubOffset.toFixed(2)}` : '';
 
   useEffect(() => {
     const video = videoRef.current;
@@ -486,10 +549,28 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sourc
   }, [activeSub, subtitleSrc]);
 
   const chooseSubtitle = useCallback((sub: SubtitleOption | null) => {
-    setActiveSub(sub);
+    setUserSubChoice(sub ?? 'off');
     setPreferredSubtitleLang(sub ? sub.lang : 'off');
     setSubMenuOpen(false);
   }, []);
+
+  const adjustSubtitleDelay = useCallback((delta: number) => {
+    setSubtitleDelay((prev) => {
+      const next = Math.round((prev + delta) * 10) / 10;
+      setNotice(`Subtitle delay: ${next > 0 ? `+${next.toFixed(1)}s` : `${next.toFixed(1)}s`}`);
+      return next;
+    });
+  }, []);
+
+  const chooseAudioTrack = (streamIndex: number) => {
+    setAudioMenuOpen(false);
+    if (streamIndex === selectedAudioIndex) return;
+    const at = filmTime();
+    setSelectedAudioIndex(streamIndex);
+    setMode('transcode');
+    setOffset(at);
+    setBuffering(true);
+  };
 
   // --- Controls ---
   const togglePlay = useCallback(() => {
@@ -518,16 +599,16 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sourc
         const local = t - offset;
         const end = video.buffered.length ? video.buffered.end(video.buffered.length - 1) : 0;
         if (local >= 0 && local <= end) {
-          video.currentTime = local; // already converted: seek inside the current stream
+          video.currentTime = local;
         } else {
-          setOffset(t); // restart the conversion at the new position
+          setOffset(t);
           setBuffering(true);
         }
       } else {
         video.currentTime = t;
       }
     },
-    [duration, isLive, mode, offset, phase],
+    [duration, isLive, mode, offset, phase]
   );
 
   const toggleMute = useCallback(() => {
@@ -543,17 +624,109 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sourc
     else document.exitFullscreen().catch(() => {});
   }, []);
 
+  const togglePip = useCallback(() => {
+    const video = videoRef.current;
+    if (!video || !document.pictureInPictureEnabled) return;
+    if (document.pictureInPictureElement) {
+      document.exitPictureInPicture().catch(() => {});
+    } else {
+      video.requestPictureInPicture().catch(() => {});
+    }
+  }, []);
+
   useEffect(() => {
     const onChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
     document.addEventListener('fullscreenchange', onChange);
     return () => document.removeEventListener('fullscreenchange', onChange);
   }, []);
 
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const onEnter = () => setIsPip(true);
+    const onLeave = () => setIsPip(false);
+    video.addEventListener('enterpictureinpicture', onEnter);
+    video.addEventListener('leavepictureinpicture', onLeave);
+    return () => {
+      video.removeEventListener('enterpictureinpicture', onEnter);
+      video.removeEventListener('leavepictureinpicture', onLeave);
+    };
+  }, []);
+
+  // Wire navigator.mediaSession for hardware media keys and mobile lock-screen controls.
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
+    const ms = navigator.mediaSession;
+    try {
+      ms.metadata = new MediaMetadata({
+        title: displayTitle,
+        artist: 'Screentime',
+      });
+      ms.setActionHandler('play', () => {
+        wantPlay.current = true;
+        videoRef.current?.play().catch(() => {});
+      });
+      ms.setActionHandler('pause', () => {
+        wantPlay.current = false;
+        videoRef.current?.pause();
+      });
+      ms.setActionHandler('seekbackward', isLive ? null : () => seekTo(filmTime() - 10));
+      ms.setActionHandler('seekforward', isLive ? null : () => seekTo(filmTime() + 10));
+      ms.setActionHandler('previoustrack', sources.length > 1 ? () => selectSource((sourceIndex - 1 + sources.length) % sources.length, !isLive) : null);
+      ms.setActionHandler('nexttrack', sources.length > 1 ? () => selectSource((sourceIndex + 1) % sources.length, !isLive) : null);
+    } catch {
+      // ignore unsupported handlers
+    }
+    return () => {
+      try {
+        ms.setActionHandler('play', null);
+        ms.setActionHandler('pause', null);
+        ms.setActionHandler('seekbackward', null);
+        ms.setActionHandler('seekforward', null);
+        ms.setActionHandler('previoustrack', null);
+        ms.setActionHandler('nexttrack', null);
+      } catch {
+        // ignore
+      }
+    };
+  }, [displayTitle, isLive, seekTo, selectSource, sourceIndex, sources.length]);
+
   const revealControls = useCallback(() => {
     setShowControls(true);
     if (hideTimer.current) clearTimeout(hideTimer.current);
     hideTimer.current = setTimeout(() => setShowControls(false), 3000);
   }, []);
+
+  const handleVideoPointerUp = (e: React.PointerEvent<HTMLVideoElement>) => {
+    if (e.pointerType === 'touch') {
+      const now = Date.now();
+      const rect = e.currentTarget.getBoundingClientRect();
+      const relX = (e.clientX - rect.left) / Math.max(1, rect.width);
+      // Double-tap left/right third on touch to seek ±10s.
+      if (!isLive && now - lastTouchTap.current.time < 300 && Math.abs(e.clientX - lastTouchTap.current.x) < 80) {
+        if (relX < 0.35) {
+          seekTo(filmTime() - 10);
+          setNotice('−10s');
+          lastTouchTap.current = { time: 0, x: 0 };
+          return;
+        }
+        if (relX > 0.65) {
+          seekTo(filmTime() + 10);
+          setNotice('+10s');
+          lastTouchTap.current = { time: 0, x: 0 };
+          return;
+        }
+      }
+      lastTouchTap.current = { time: now, x: e.clientX };
+      if (!showControls) {
+        revealControls();
+      } else {
+        setShowControls(false);
+      }
+      return;
+    }
+    togglePlay();
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -573,8 +746,23 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sourc
           e.preventDefault();
           seekTo(filmTime() + 10);
           break;
+        case 'arrowup':
+          if (isLive && sources.length > 1) {
+            e.preventDefault();
+            selectSource((sourceIndex - 1 + sources.length) % sources.length, false);
+          }
+          break;
+        case 'arrowdown':
+          if (isLive && sources.length > 1) {
+            e.preventDefault();
+            selectSource((sourceIndex + 1) % sources.length, false);
+          }
+          break;
         case 'f':
           toggleFullscreen();
+          break;
+        case 'p':
+          togglePip();
           break;
         case 'm':
           toggleMute();
@@ -582,15 +770,30 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sourc
         case 'c':
           if (subtitles.length) chooseSubtitle(activeSub ? null : subtitles[0]);
           break;
+        case 'g':
+          if (activeSub) adjustSubtitleDelay(-0.5);
+          break;
+        case 'h':
+          if (activeSub) adjustSubtitleDelay(0.5);
+          break;
         case 'escape':
-          if (subMenuOpen) setSubMenuOpen(false);
-          else if (!document.fullscreenElement) onClose();
+          if (subMenuOpen || sourceMenuOpen || audioMenuOpen) {
+            setSubMenuOpen(false);
+            setSourceMenuOpen(false);
+            setAudioMenuOpen(false);
+          } else if (!document.fullscreenElement) {
+            onClose();
+          }
           break;
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [togglePlay, toggleFullscreen, toggleMute, revealControls, onClose, subtitles, activeSub, subMenuOpen, seekTo, chooseSubtitle]);
+  }, [
+    togglePlay, toggleFullscreen, togglePip, toggleMute, revealControls, onClose,
+    subtitles, activeSub, subMenuOpen, sourceMenuOpen, audioMenuOpen,
+    seekTo, chooseSubtitle, adjustSubtitleDelay, isLive, sources.length, sourceIndex, selectSource,
+  ]);
 
   // --- Overlay status ---
   const videoFiles = (prepare?.files || []).filter((f) => VIDEO_FILE.test(f.name));
@@ -608,7 +811,9 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sourc
     statusText = isLive ? 'Connecting…' : `Buffering… ${Math.min(Math.floor(ahead), bufferTarget)} / ${bufferTarget}s`;
   }
   const canSkipSource = sources.length > sourceIndex + 1;
-  const controlsVisible = showControls || !isPlaying || buffering || subMenuOpen;
+  const anyMenuOpen = subMenuOpen || sourceMenuOpen || audioMenuOpen;
+  const controlsVisible = showControls || !isPlaying || buffering || anyMenuOpen;
+  const showSubButton = Boolean(subtitleQuery?.imdbId) || embeddedSubs.length > 0;
 
   return (
     <div
@@ -621,11 +826,12 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sourc
         className="w-full h-full object-contain"
         preload="auto"
         playsInline
-        onClick={togglePlay}
+        onPointerUp={handleVideoPointerUp}
         onDoubleClick={toggleFullscreen}
         onLoadedMetadata={(e) => {
           const v = e.currentTarget;
           if (isFinite(v.duration)) setMediaDuration(v.duration);
+          if (!isLive) v.playbackRate = playbackRate;
           if (mode === 'direct' && resumeAt.current > 0) {
             v.currentTime = resumeAt.current;
             resumeAt.current = 0;
@@ -662,7 +868,14 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sourc
         onError={onVideoError}
       >
         {activeSub && (
-          <track key={`${activeSub.id}-${base}`} kind="subtitles" src={subtitleSrc} srcLang={activeSub.lang} label={activeSub.label} default />
+          <track
+            key={`${activeSub.id}-${effectiveSubOffset}`}
+            kind="subtitles"
+            src={subtitleSrc}
+            srcLang={activeSub.lang}
+            label={activeSub.label}
+            default
+          />
         )}
       </video>
 
@@ -704,9 +917,19 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sourc
           <div className="max-w-md bg-zinc-900 border border-zinc-800 rounded-2xl p-6 text-center space-y-4">
             <AlertCircle className="w-8 h-8 text-rose-500 mx-auto" />
             <p className="text-sm text-zinc-200">{error}</p>
-            <button onClick={onClose} className="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-sm font-semibold">
-              Back
-            </button>
+            <div className="flex items-center justify-center gap-2">
+              {sources.length > 1 && (
+                <button
+                  onClick={() => selectSource((sourceIndex + 1) % sources.length, !isLive)}
+                  className="px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white text-sm font-semibold"
+                >
+                  {isLive ? 'Next channel' : 'Try next source'}
+                </button>
+              )}
+              <button onClick={onClose} className="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-sm font-semibold">
+                Back
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -717,10 +940,15 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sourc
           controlsVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
       >
-        <button onClick={onClose} aria-label="Close player" className="p-2.5 rounded-full bg-zinc-900/80 hover:bg-zinc-800 text-white border border-zinc-700/60">
+        <button
+          onClick={onClose}
+          title="Close (Esc)"
+          aria-label="Close player"
+          className="p-2.5 rounded-full bg-zinc-900/80 hover:bg-zinc-800 text-white border border-zinc-700/60"
+        >
           <X className="w-5 h-5" />
         </button>
-        <h1 className="text-base sm:text-lg font-semibold text-white truncate">{title}</h1>
+        <h1 className="text-base sm:text-lg font-semibold text-white truncate">{displayTitle}</h1>
       </div>
 
       {/* Bottom controls */}
@@ -751,22 +979,65 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sourc
           </div>
         )}
 
-        <div className="flex items-center gap-2 sm:gap-3">
-          <button onClick={togglePlay} aria-label={isPlaying ? 'Pause' : 'Play'} className="p-2 rounded-full bg-white text-black hover:bg-zinc-200">
+        <div className="flex items-center gap-1.5 sm:gap-3">
+          <button
+            onClick={togglePlay}
+            title={isPlaying ? 'Pause (Space / K)' : 'Play (Space / K)'}
+            aria-label={isPlaying ? 'Pause' : 'Play'}
+            className="p-2 rounded-full bg-white text-black hover:bg-zinc-200"
+          >
             {isPlaying ? <Pause className="w-5 h-5 fill-current" /> : <Play className="w-5 h-5 fill-current ml-0.5" />}
           </button>
+
+          {isLive && sources.length > 1 && (
+            <>
+              <button
+                onClick={() => selectSource((sourceIndex - 1 + sources.length) % sources.length, false)}
+                title="Previous channel (↑)"
+                aria-label="Previous channel"
+                className="p-2 text-zinc-300 hover:text-white"
+              >
+                <SkipBack className="w-5 h-5" />
+              </button>
+              <button
+                onClick={() => selectSource((sourceIndex + 1) % sources.length, false)}
+                title="Next channel (↓)"
+                aria-label="Next channel"
+                className="p-2 text-zinc-300 hover:text-white"
+              >
+                <SkipForward className="w-5 h-5" />
+              </button>
+            </>
+          )}
+
           {!isLive && (
             <>
-              <button onClick={() => seekTo(currentTime - 10)} aria-label="Back 10 seconds" className="p-2 text-zinc-300 hover:text-white">
+              <button
+                onClick={() => seekTo(currentTime - 10)}
+                title="Back 10 seconds (←)"
+                aria-label="Back 10 seconds"
+                className="p-2 text-zinc-300 hover:text-white"
+              >
                 <RotateCcw className="w-5 h-5" />
               </button>
-              <button onClick={() => seekTo(currentTime + 10)} aria-label="Forward 10 seconds" className="p-2 text-zinc-300 hover:text-white">
+              <button
+                onClick={() => seekTo(currentTime + 10)}
+                title="Forward 10 seconds (→)"
+                aria-label="Forward 10 seconds"
+                className="p-2 text-zinc-300 hover:text-white"
+              >
                 <RotateCw className="w-5 h-5" />
               </button>
             </>
           )}
+
           <div className="flex items-center gap-1">
-            <button onClick={toggleMute} aria-label={muted ? 'Unmute' : 'Mute'} className="p-2 text-zinc-300 hover:text-white">
+            <button
+              onClick={toggleMute}
+              title={muted ? 'Unmute (M)' : 'Mute (M)'}
+              aria-label={muted ? 'Unmute' : 'Mute'}
+              className="p-2 text-zinc-300 hover:text-white"
+            >
               {muted || volume === 0 ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
             </button>
             <input
@@ -802,7 +1073,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sourc
                   resetPipeline(true);
                 }}
                 aria-label="File"
-                className="max-w-[10rem] sm:max-w-xs bg-zinc-900/90 border border-zinc-700 text-xs text-zinc-200 rounded-lg px-2 py-1.5"
+                className="max-w-[9rem] sm:max-w-xs bg-zinc-900/90 border border-zinc-700 text-xs text-zinc-200 rounded-lg px-2 py-1.5"
               >
                 {fileIndex === undefined && <option value="">Auto (largest file)</option>}
                 {videoFiles.map((f) => (
@@ -813,17 +1084,151 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sourc
               </select>
             )}
 
-            {subtitleQuery?.imdbId && (
+            {/* Playback speed (VOD) */}
+            {!isLive && (
+              <select
+                value={playbackRate}
+                onChange={(e) => setPlaybackRate(parseFloat(e.target.value))}
+                aria-label="Playback speed"
+                title="Playback speed"
+                className="bg-zinc-900/80 hover:bg-zinc-800 border border-zinc-700/70 text-xs font-medium text-zinc-200 rounded-lg px-2 py-1.5 cursor-pointer outline-none"
+              >
+                {PLAYBACK_RATES.map((r) => (
+                  <option key={r} value={r}>
+                    {r}x
+                  </option>
+                ))}
+              </select>
+            )}
+
+            {/* Audio track switcher (when multiple audio streams exist) */}
+            {audioStreams.length > 1 && (
               <div className="relative">
                 <button
-                  onClick={() => setSubMenuOpen((o) => !o)}
+                  onClick={() => {
+                    setAudioMenuOpen((o) => !o);
+                    setSubMenuOpen(false);
+                    setSourceMenuOpen(false);
+                  }}
+                  title="Audio track"
+                  aria-label="Audio track"
+                  className="p-2 rounded-lg text-zinc-300 hover:text-white hover:bg-white/10"
+                >
+                  <Languages className="w-5 h-5" />
+                </button>
+                {audioMenuOpen && (
+                  <div className="absolute bottom-12 right-0 w-56 max-h-72 overflow-y-auto rounded-xl bg-zinc-900/95 border border-zinc-700 shadow-2xl py-1 text-sm">
+                    <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-400 border-b border-zinc-800">
+                      Audio track
+                    </div>
+                    {audioStreams.map((a) => {
+                      const label = `${formatLang(a.language || 'und')}${a.title ? ` (${a.title})` : ''} · ${a.codec.toUpperCase()}`;
+                      const active = selectedAudioIndex === a.index;
+                      return (
+                        <button
+                          key={a.index}
+                          onClick={() => chooseAudioTrack(a.index)}
+                          className="w-full flex items-center justify-between px-3 py-2 text-left text-zinc-200 hover:bg-white/10"
+                        >
+                          <span className="truncate pr-2">{label}</span>
+                          {active && <Check className="w-4 h-4 shrink-0 text-rose-400" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* In-player Source / Channel Switcher */}
+            {sources.length > 1 && (
+              <div className="relative">
+                <button
+                  onClick={() => {
+                    setSourceMenuOpen((o) => !o);
+                    setSubMenuOpen(false);
+                    setAudioMenuOpen(false);
+                  }}
+                  title={isLive ? 'Switch channel (↑/↓)' : `Switch source (${sourceIndex + 1}/${sources.length})`}
+                  aria-label={isLive ? 'Switch channel' : 'Switch source'}
+                  className="p-2 rounded-lg text-zinc-300 hover:text-white hover:bg-white/10 flex items-center gap-1"
+                >
+                  <Layers className="w-5 h-5" />
+                  <span className="hidden sm:inline text-xs font-mono text-zinc-400">
+                    {sourceIndex + 1}/{sources.length}
+                  </span>
+                </button>
+                {sourceMenuOpen && (
+                  <div className="absolute bottom-12 right-0 w-72 max-h-72 overflow-y-auto rounded-xl bg-zinc-900/95 border border-zinc-700 shadow-2xl py-1 text-sm">
+                    <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-400 border-b border-zinc-800">
+                      {isLive ? 'Channels' : 'Sources'}
+                    </div>
+                    {sources.map((s, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => selectSource(idx, !isLive)}
+                        className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left text-zinc-200 hover:bg-white/10"
+                      >
+                        <span className="truncate text-xs">{s.label || `Source ${idx + 1}`}</span>
+                        {idx === sourceIndex && <Check className="w-4 h-4 shrink-0 text-rose-400" />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Subtitles + Subtitle Delay */}
+            {showSubButton && (
+              <div className="relative">
+                <button
+                  onClick={() => {
+                    setSubMenuOpen((o) => !o);
+                    setSourceMenuOpen(false);
+                    setAudioMenuOpen(false);
+                  }}
+                  title="Subtitles (C)"
                   aria-label="Subtitles"
                   className={`p-2 rounded-lg ${activeSub ? 'text-white' : 'text-zinc-400'} hover:text-white hover:bg-white/10`}
                 >
                   <Captions className="w-5 h-5" />
                 </button>
                 {subMenuOpen && (
-                  <div className="absolute bottom-12 right-0 w-56 max-h-72 overflow-y-auto rounded-xl bg-zinc-900/95 border border-zinc-700 shadow-2xl py-1 text-sm">
+                  <div className="absolute bottom-12 right-0 w-64 max-h-80 overflow-y-auto rounded-xl bg-zinc-900/95 border border-zinc-700 shadow-2xl py-1 text-sm">
+                    {activeSub && (
+                      <div className="px-3 py-2 border-b border-zinc-800 flex items-center justify-between gap-2">
+                        <span className="text-[11px] text-zinc-400">
+                          Sync ({subtitleDelay > 0 ? `+${subtitleDelay.toFixed(1)}s` : `${subtitleDelay.toFixed(1)}s`})
+                        </span>
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => adjustSubtitleDelay(-0.5)}
+                            title="Advance subtitles 0.5s (G)"
+                            className="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-xs text-zinc-200"
+                          >
+                            −0.5s
+                          </button>
+                          {subtitleDelay !== 0 && (
+                            <button
+                              type="button"
+                              onClick={() => setSubtitleDelay(0)}
+                              className="px-1.5 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-[11px] text-zinc-400 hover:text-white"
+                            >
+                              0s
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => adjustSubtitleDelay(0.5)}
+                            title="Delay subtitles 0.5s (H)"
+                            className="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-xs text-zinc-200"
+                          >
+                            +0.5s
+                          </button>
+                        </div>
+                      </div>
+                    )}
                     <button onClick={() => chooseSubtitle(null)} className="w-full flex items-center justify-between px-3 py-2 text-left text-zinc-200 hover:bg-white/10">
                       Off {!activeSub && <Check className="w-4 h-4 text-rose-400" />}
                     </button>
@@ -834,7 +1239,8 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sourc
                         onClick={() => chooseSubtitle(s)}
                         className="w-full flex items-center justify-between px-3 py-2 text-left text-zinc-200 hover:bg-white/10"
                       >
-                        {s.label} {activeSub?.id === s.id && <Check className="w-4 h-4 text-rose-400" />}
+                        <span className="truncate pr-2">{s.label}</span>
+                        {activeSub?.id === s.id && <Check className="w-4 h-4 shrink-0 text-rose-400" />}
                       </button>
                     ))}
                   </div>
@@ -842,7 +1248,24 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({ title, sourc
               </div>
             )}
 
-            <button onClick={toggleFullscreen} aria-label="Fullscreen" className="p-2 text-zinc-300 hover:text-white">
+            {/* Picture-in-Picture */}
+            {pipSupported && (
+              <button
+                onClick={togglePip}
+                title="Picture-in-Picture (P)"
+                aria-label="Picture-in-Picture"
+                className={`p-2 rounded-lg ${isPip ? 'text-rose-400' : 'text-zinc-300'} hover:text-white hover:bg-white/10`}
+              >
+                <PictureInPicture2 className="w-5 h-5" />
+              </button>
+            )}
+
+            <button
+              onClick={toggleFullscreen}
+              title={isFullscreen ? 'Exit fullscreen (F)' : 'Fullscreen (F)'}
+              aria-label="Fullscreen"
+              className="p-2 text-zinc-300 hover:text-white"
+            >
               {isFullscreen ? <Minimize className="w-5 h-5" /> : <Maximize className="w-5 h-5" />}
             </button>
           </div>

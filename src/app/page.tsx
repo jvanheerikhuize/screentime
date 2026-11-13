@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Navbar, AppTab } from '@/components/Navbar';
 import { HeroBanner } from '@/components/HeroBanner';
 import { MediaCarousel, CarouselSkeleton } from '@/components/MediaCarousel';
@@ -27,6 +27,8 @@ interface HomeData {
   rows: CatalogRow[];
 }
 
+const VALID_TABS = new Set<AppTab>(['home', 'movies', 'tv', 'anime', 'live']);
+
 /** Rows built from the bundled sample catalog; only used if the catalog API is unreachable. */
 function fallbackHome(data?: { featured?: MediaItem; trending?: MediaItem[]; movies?: MediaItem[]; series?: MediaItem[] }): HomeData {
   const all = data?.trending?.length ? data.trending : SAMPLE_MEDIA_CATALOG;
@@ -40,6 +42,7 @@ function fallbackHome(data?: { featured?: MediaItem; trending?: MediaItem[]; mov
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<AppTab>('home');
+  const [activeGenre, setActiveGenre] = useState<string | null>(null);
   const [home, setHome] = useState<HomeData | null>(null);
 
   const [selectedMedia, setSelectedMedia] = useState<MediaItem | null>(null);
@@ -47,29 +50,90 @@ export default function Home() {
   const [activePlayer, setActivePlayer] = useState<{
     title: string;
     sources: PlayableSource[];
+    initialSourceIndex?: number;
     isLive?: boolean;
     subtitleQuery?: SubtitleQuery;
   } | null>(null);
+
+  // Sync initial state and browser Back/Forward with URL search params (?tab=, ?genre=, ?media=).
+  const applyUrlParams = useCallback((rowsData?: HomeData | null) => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const tabParam = params.get('tab') as AppTab | null;
+    if (tabParam && VALID_TABS.has(tabParam)) {
+      setActiveTab(tabParam);
+    } else {
+      setActiveTab('home');
+    }
+    setActiveGenre(params.get('genre'));
+
+    const mediaParam = params.get('media');
+    if (!mediaParam) {
+      setSelectedMedia(null);
+    } else if (rowsData) {
+      const allItems = [
+        ...(rowsData.featured ? [rowsData.featured] : []),
+        ...rowsData.rows.flatMap((r) => r.items),
+        ...SAMPLE_MEDIA_CATALOG,
+      ];
+      const found = allItems.find((m) => String(m.imdbId || m.id) === mediaParam || String(m.id) === mediaParam);
+      if (found) setSelectedMedia(found);
+    }
+  }, []);
+
+  useEffect(() => {
+    const onPopState = () => applyUrlParams(home);
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, [applyUrlParams, home]);
+
+  const updateUrl = useCallback((tab: AppTab, genre: string | null, media: MediaItem | null) => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams();
+    if (tab !== 'home') params.set('tab', tab);
+    if (genre && (tab === 'movies' || tab === 'tv' || tab === 'anime')) params.set('genre', genre);
+    if (media) params.set('media', String(media.imdbId || media.id));
+    const qs = params.toString();
+    const nextUrl = qs ? `${window.location.pathname}?${qs}` : window.location.pathname;
+    if (nextUrl !== `${window.location.pathname}${window.location.search}`) {
+      window.history.pushState(null, '', nextUrl);
+    }
+  }, []);
 
   useEffect(() => {
     fetch('/api/media/trending')
       .then((res) => res.json())
       .then((data) => {
-        if (Array.isArray(data.rows) && data.rows.length > 0) {
-          setHome({ featured: data.featured ?? data.rows[0].items[0] ?? null, rows: data.rows });
-        } else {
-          setHome(fallbackHome(data));
-        }
+        const nextHome =
+          Array.isArray(data.rows) && data.rows.length > 0
+            ? { featured: data.featured ?? data.rows[0].items[0] ?? null, rows: data.rows }
+            : fallbackHome(data);
+        setHome(nextHome);
+        applyUrlParams(nextHome);
       })
       .catch((err) => {
         console.error('Failed to load catalog:', err);
-        setHome(fallbackHome());
+        const fallback = fallbackHome();
+        setHome(fallback);
+        applyUrlParams(fallback);
       });
-  }, []);
+  }, [applyUrlParams]);
 
   const switchTab = (tab: AppTab) => {
     setActiveTab(tab);
+    setActiveGenre(null);
+    updateUrl(tab, null, selectedMedia);
     window.scrollTo({ top: 0 });
+  };
+
+  const selectMedia = (media: MediaItem | null) => {
+    setSelectedMedia(media);
+    updateUrl(activeTab, activeGenre, media);
+  };
+
+  const handleGenreChange = (genre: string | null) => {
+    setActiveGenre(genre);
+    updateUrl(activeTab, genre, selectedMedia);
   };
 
   const toPlayable = (sources: StreamSource[]): PlayableSource[] =>
@@ -80,7 +144,7 @@ export default function Home() {
   const handlePlaySource = (sources: StreamSource[], media: MediaItem, context: PlaybackContext) => {
     const playable = toPlayable(sources);
     if (!playable.length) return;
-    setSelectedMedia(null);
+    selectMedia(null);
     const episodeTag = context.season ? ` · S${context.season}E${context.episode}` : '';
     // Anime episodes are numbered absolutely; subtitles use the mapped IMDb series and season.
     const subtitleQuery: SubtitleQuery | undefined = media.anime
@@ -97,11 +161,18 @@ export default function Home() {
   const handlePlayMedia = (media: MediaItem) => {
     const sources = OPEN_SOURCE_STREAMS[String(media.id)] || OPEN_SOURCE_STREAMS[String(media.tmdbId)] || [];
     if (sources.length > 0) handlePlaySource(rankSources(sources), media, {});
-    else setSelectedMedia(media);
+    else selectMedia(media);
   };
 
-  const handlePlayLiveChannel = (channel: LiveChannel) => {
-    setActivePlayer({ title: channel.name, sources: [{ url: channel.streamUrl }], isLive: channel.isLive });
+  const handlePlayLiveChannel = (channel: LiveChannel, channelList?: LiveChannel[]) => {
+    const list = channelList && channelList.length > 0 ? channelList : [channel];
+    const idx = Math.max(0, list.findIndex((c) => c.id === channel.id || c.streamUrl === channel.streamUrl));
+    setActivePlayer({
+      title: channel.name,
+      sources: list.map((c) => ({ url: c.streamUrl, label: c.name })),
+      initialSourceIndex: idx,
+      isLive: channel.isLive,
+    });
   };
 
   return (
@@ -109,13 +180,14 @@ export default function Home() {
       <Navbar
         activeTab={activeTab}
         setActiveTab={switchTab}
-        onSelectMedia={setSelectedMedia}
+        onSelectMedia={selectMedia}
+        onSelectLiveChannel={(ch) => handlePlayLiveChannel(ch)}
         onOpenSettingsModal={() => setIsSettingsModalOpen(true)}
       />
 
       {activeTab === 'home' ? (
         <main className="flex-1 pb-24">
-          <HeroBanner media={home?.featured ?? null} onPlay={handlePlayMedia} onMoreInfo={setSelectedMedia} />
+          <HeroBanner media={home?.featured ?? null} onPlay={handlePlayMedia} onMoreInfo={selectMedia} />
           <div className="relative z-10 -mt-8 sm:-mt-12 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 space-y-10 sm:space-y-12">
             {home
               ? home.rows.map((row) => (
@@ -124,7 +196,7 @@ export default function Home() {
                     title={row.title}
                     subtitle={row.subtitle}
                     items={row.items}
-                    onSelectMedia={setSelectedMedia}
+                    onSelectMedia={selectMedia}
                     onPlayMedia={handlePlayMedia}
                   />
                 ))
@@ -136,19 +208,34 @@ export default function Home() {
           {activeTab === 'movies' && (
             <>
               <PageHeader eyebrow="Browse" title="Movies" description="Popular films, by genre or by year." />
-              <CatalogBrowser mediaType="movie" onSelectMedia={setSelectedMedia} />
+              <CatalogBrowser
+                mediaType="movie"
+                onSelectMedia={selectMedia}
+                initialGenre={activeGenre}
+                onGenreChange={handleGenreChange}
+              />
             </>
           )}
           {activeTab === 'tv' && (
             <>
               <PageHeader eyebrow="Browse" title="Series" description="Every season and episode, ready to stream." />
-              <CatalogBrowser mediaType="tv" onSelectMedia={setSelectedMedia} />
+              <CatalogBrowser
+                mediaType="tv"
+                onSelectMedia={selectMedia}
+                initialGenre={activeGenre}
+                onGenreChange={handleGenreChange}
+              />
             </>
           )}
           {activeTab === 'anime' && (
             <>
               <PageHeader eyebrow="Browse" title="Anime" description="Trending, seasonal and all-time favourites, powered by AniList." />
-              <CatalogBrowser mediaType="anime" onSelectMedia={setSelectedMedia} />
+              <CatalogBrowser
+                mediaType="anime"
+                onSelectMedia={selectMedia}
+                initialGenre={activeGenre}
+                onGenreChange={handleGenreChange}
+              />
             </>
           )}
           {activeTab === 'live' && <LiveChannelsGrid onPlayChannel={handlePlayLiveChannel} />}
@@ -159,7 +246,7 @@ export default function Home() {
         <MediaDetailModal
           key={`${selectedMedia.mediaType}-${selectedMedia.id}`}
           media={selectedMedia}
-          onClose={() => setSelectedMedia(null)}
+          onClose={() => selectMedia(null)}
           onPlaySource={handlePlaySource}
         />
       )}
@@ -170,6 +257,7 @@ export default function Home() {
         <VideoPlayerModal
           title={activePlayer.title}
           sources={activePlayer.sources}
+          initialSourceIndex={activePlayer.initialSourceIndex}
           isLive={activePlayer.isLive}
           subtitleQuery={activePlayer.subtitleQuery}
           onClose={() => setActivePlayer(null)}

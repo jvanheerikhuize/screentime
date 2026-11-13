@@ -21,6 +21,9 @@ export async function GET(req: NextRequest) {
       reason: info.reason,
       video: info.video?.codec,
       audio: info.audio ? `${info.audio.codec}${info.audio.language ? ` (${info.audio.language})` : ''}` : undefined,
+      selectedAudioIndex: info.audio?.index,
+      audioStreams: info.audioStreams,
+      subtitleStreams: info.subtitleStreams,
       reencodesVideo: !info.directPlayable && !info.copyVideo,
     });
   } catch (e) {

@@ -10,6 +10,8 @@ type BrowseSource = 'top' | 'year' | 'trending' | 'popular' | 'season';
 interface CatalogBrowserProps {
   mediaType: BrowseType;
   onSelectMedia: (item: MediaItem) => void;
+  initialGenre?: string | null;
+  onGenreChange?: (genre: string | null) => void;
 }
 
 const ANIME_GENRES = [
@@ -57,17 +59,25 @@ async function fetchPage(
   params.set('skip', String(pageIndex * CINEMETA_PAGE));
   if (genre) params.set('genre', genre);
   const res = await fetch(`/api/catalog?${params.toString()}`);
+  if (!res.ok) throw new Error(`Catalog request failed (${res.status})`);
   const data = await res.json();
   return { items: data.items || [], hasMore: Boolean(data.hasMore) };
 }
 
-export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({ mediaType, onSelectMedia }) => {
+export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({
+  mediaType,
+  onSelectMedia,
+  initialGenre = null,
+  onGenreChange,
+}) => {
   const [source, setSource] = useState<BrowseSource>(SOURCES[mediaType][0].key);
-  const [genre, setGenre] = useState<string | null>(null);
+  const [genre, setGenre] = useState<string | null>(initialGenre);
   const [items, setItems] = useState<MediaItem[]>([]);
   const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
   // Bumped on every filter change so in-flight "load more" responses for the old filter are dropped.
   const filterVersion = useRef(0);
 
@@ -84,9 +94,13 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({ mediaType, onSel
         setItems(result.items);
         setHasMore(result.hasMore);
         setPage(0);
+        setError(null);
       })
       .catch((e) => {
-        if (!cancelled) console.error('Failed to load catalog page:', e);
+        if (!cancelled) {
+          console.error('Failed to load catalog page:', e);
+          setError('Could not load catalog right now. Check your connection and try again.');
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -94,22 +108,31 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({ mediaType, onSel
     return () => {
       cancelled = true;
     };
-  }, [mediaType, source, genre]);
+  }, [mediaType, source, genre, retryCount]);
 
   const changeFilter = (nextSource: BrowseSource, nextGenre: string | null) => {
     if (nextSource === source && nextGenre === genre) return;
     filterVersion.current++;
     setSource(nextSource);
     setGenre(nextGenre);
+    onGenreChange?.(nextGenre);
     setItems([]);
     setHasMore(false);
+    setError(null);
     setLoading(true);
+  };
+
+  const retry = () => {
+    setError(null);
+    setLoading(true);
+    setRetryCount((c) => c + 1);
   };
 
   const loadMore = () => {
     const version = filterVersion.current;
     const nextPage = page + 1;
     setLoading(true);
+    setError(null);
     fetchPage(mediaType, source, genre, nextPage)
       .then((result) => {
         if (version !== filterVersion.current) return;
@@ -121,7 +144,9 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({ mediaType, onSel
         setPage(nextPage);
       })
       .catch((e) => {
-        if (version === filterVersion.current) setHasMore(false);
+        if (version === filterVersion.current) {
+          setError('Could not load more titles. Try again in a moment.');
+        }
         console.error('Failed to load catalog page:', e);
       })
       .finally(() => {
@@ -185,11 +210,24 @@ export const CatalogBrowser: React.FC<CatalogBrowserProps> = ({ mediaType, onSel
         {loading && Array.from({ length: items.length ? 6 : 18 }).map((_, i) => <PosterSkeleton key={`s${i}`} />)}
       </div>
 
-      {!loading && items.length === 0 && (
+      {!loading && error && (
+        <div className="py-12 text-center space-y-3">
+          <p className="text-sm text-rose-400">{error}</p>
+          <button
+            type="button"
+            onClick={items.length > 0 ? loadMore : retry}
+            className="px-5 py-2 rounded-full bg-white/[0.08] hover:bg-white/15 text-xs font-semibold text-white ring-1 ring-inset ring-white/15 transition-colors"
+          >
+            Try again
+          </button>
+        </div>
+      )}
+
+      {!loading && !error && items.length === 0 && (
         <p className="text-sm text-zinc-500 py-16 text-center">No titles found for this filter.</p>
       )}
 
-      {!loading && hasMore && (
+      {!loading && !error && hasMore && (
         <div className="flex justify-center pt-2">
           <button
             onClick={loadMore}

@@ -9,6 +9,7 @@ export interface MediaStreamInfo {
   index: number;
   codec: string;
   language?: string;
+  title?: string;
   channels?: number;
   height?: number;
   isDefault: boolean;
@@ -20,6 +21,8 @@ export interface MediaInfo {
   video?: MediaStreamInfo;
   audio?: MediaStreamInfo;
   audioTracks: number;
+  audioStreams: MediaStreamInfo[];
+  subtitleStreams: MediaStreamInfo[];
   /** True when the browser can play the file as-is via HTTP range requests. */
   directPlayable: boolean;
   copyVideo: boolean;
@@ -30,6 +33,7 @@ export interface MediaInfo {
 // Codecs Chrome/Firefox/Safari decode natively (HEVC is missing on most Linux/Windows setups).
 const BROWSER_VIDEO = new Set(['h264', 'vp8', 'vp9', 'av1']);
 const BROWSER_AUDIO = new Set(['aac', 'mp3', 'opus', 'vorbis', 'flac']);
+const TEXT_SUBTITLES = new Set(['subrip', 'srt', 'ass', 'ssa', 'webvtt', 'mov_text', 'text']);
 const PREFERRED_AUDIO_LANGS = ['eng', 'en'];
 
 interface FfprobeStream {
@@ -38,7 +42,7 @@ interface FfprobeStream {
   codec_name?: string;
   channels?: number;
   height?: number;
-  tags?: { language?: string };
+  tags?: { language?: string; title?: string };
   disposition?: { default?: number; attached_pic?: number };
 }
 interface FfprobeOutput {
@@ -47,6 +51,7 @@ interface FfprobeOutput {
 }
 
 const probeCache = new Map<string, Promise<MediaInfo>>();
+const embeddedSubCache = new Map<string, Promise<string>>();
 
 function runJson(cmd: string, args: string[], timeoutMs: number): Promise<FfprobeOutput> {
   return new Promise((resolve, reject) => {
@@ -97,12 +102,16 @@ export function probeMedia(input: string): Promise<MediaInfo> {
       index: s.index,
       codec: String(s.codec_name || 'unknown'),
       language: s.tags?.language,
+      title: s.tags?.title,
       channels: s.channels,
       height: s.height,
       isDefault: s.disposition?.default === 1,
     });
     const videos = streams.filter((s) => s.codec_type === 'video' && !s.disposition?.attached_pic).map(toInfo);
     const audios = streams.filter((s) => s.codec_type === 'audio').map(toInfo);
+    const subtitles = streams
+      .filter((s) => s.codec_type === 'subtitle' && TEXT_SUBTITLES.has(String(s.codec_name || '').toLowerCase()))
+      .map(toInfo);
     const video = videos[0];
     const audio = pickAudio(audios);
     const container = String(data.format?.format_name || '');
@@ -133,6 +142,8 @@ export function probeMedia(input: string): Promise<MediaInfo> {
       video,
       audio,
       audioTracks: audios.length,
+      audioStreams: audios,
+      subtitleStreams: subtitles,
       directPlayable,
       copyVideo: videoOk && video?.codec === 'h264',
       copyAudio: audio ? audio.codec === 'aac' || audio.codec === 'mp3' : true,
@@ -147,16 +158,73 @@ export function probeMedia(input: string): Promise<MediaInfo> {
 }
 
 /**
+ * Extract an embedded text subtitle stream as raw SRT text (cached in-memory per input+streamIndex).
+ */
+export function extractEmbeddedSubtitleSrt(input: string, streamIndex: number): Promise<string> {
+  const key = `${input}#${streamIndex}`;
+  const cached = embeddedSubCache.get(key);
+  if (cached) return cached;
+
+  const promise = new Promise<string>((resolve, reject) => {
+    const proc = spawn(
+      'ffmpeg',
+      ['-hide_banner', '-loglevel', 'error', '-nostdin', '-i', input, '-map', `0:${streamIndex}`, '-f', 'srt', 'pipe:1'],
+      { stdio: ['ignore', 'pipe', 'pipe'] }
+    );
+    let out = '';
+    let err = '';
+    const timer = setTimeout(() => {
+      proc.kill('SIGKILL');
+      reject(new Error('Subtitle extraction timed out'));
+    }, 60_000);
+
+    proc.stdout.on('data', (d) => {
+      if (out.length < 2 * 1024 * 1024) out += d.toString('utf8');
+    });
+    proc.stderr.on('data', (d) => {
+      if (err.length < 2000) err += d.toString('utf8');
+    });
+    proc.on('error', (e) => {
+      clearTimeout(timer);
+      reject(e);
+    });
+    proc.on('close', (code) => {
+      clearTimeout(timer);
+      if (code !== 0 && !out.trim()) {
+        return reject(new Error(err.trim().split('\n').pop() || `ffmpeg subtitle exited with ${code}`));
+      }
+      resolve(out);
+    });
+  });
+
+  embeddedSubCache.set(key, promise);
+  promise.catch(() => embeddedSubCache.delete(key));
+  if (embeddedSubCache.size > 30) embeddedSubCache.delete(embeddedSubCache.keys().next().value!);
+  return promise;
+}
+
+/**
  * Stream `input` from `start` seconds as fragmented MP4. Video is copied when it's H.264
  * (cheap remux), otherwise encoded to H.264; audio becomes stereo AAC unless already AAC/MP3.
  * ffmpeg is killed as soon as the HTTP client goes away.
  */
-export function transcodeToMp4(input: string, start: number, info: MediaInfo, signal: AbortSignal): ReadableStream<Uint8Array> {
+export function transcodeToMp4(
+  input: string,
+  start: number,
+  info: MediaInfo,
+  signal: AbortSignal,
+  audioStreamIndex?: number
+): ReadableStream<Uint8Array> {
+  const chosenAudio =
+    (audioStreamIndex !== undefined ? info.audioStreams.find((a) => a.index === audioStreamIndex) : undefined) ||
+    info.audio;
+  const copyAudio = chosenAudio ? chosenAudio.codec === 'aac' || chosenAudio.codec === 'mp3' : true;
+
   const args = ['-hide_banner', '-loglevel', 'error', '-nostdin'];
   if (start > 0) args.push('-ss', start.toFixed(2));
   args.push('-i', input);
   if (info.video) args.push('-map', `0:${info.video.index}`);
-  if (info.audio) args.push('-map', `0:${info.audio.index}`);
+  if (chosenAudio) args.push('-map', `0:${chosenAudio.index}`);
 
   if (info.copyVideo) {
     args.push('-c:v', 'copy');
@@ -164,8 +232,8 @@ export function transcodeToMp4(input: string, start: number, info: MediaInfo, si
     args.push('-c:v', 'libx264', '-preset', 'veryfast', '-crf', '22', '-pix_fmt', 'yuv420p');
     if ((info.video?.height || 0) > 1080) args.push('-vf', 'scale=-2:1080');
   }
-  if (info.audio) {
-    if (info.copyAudio) args.push('-c:a', 'copy');
+  if (chosenAudio) {
+    if (copyAudio) args.push('-c:a', 'copy');
     else args.push('-c:a', 'aac', '-b:a', '192k', '-ac', '2');
   }
   args.push('-sn', '-dn', '-f', 'mp4', '-movflags', 'frag_keyframe+empty_moov+default_base_moof', 'pipe:1');

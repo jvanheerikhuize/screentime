@@ -1,18 +1,19 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { Play, Search, MapPin, Clock } from 'lucide-react';
+import { Play, Search, MapPin, Clock, X } from 'lucide-react';
 import { LiveChannel } from '@/types';
 import { PageHeader } from '@/components/PageHeader';
 
 interface LiveChannelsGridProps {
-  onPlayChannel: (channel: LiveChannel) => void;
+  onPlayChannel: (channel: LiveChannel, channelList?: LiveChannel[]) => void;
 }
 
 const COUNTRY_KEY = 'screentime_live_country';
 const PAGE = 60;
 const ALL = 'all';
 const INTL = 'INTL';
+const CATEGORIES = ['All', 'News', 'Sports', 'Documentary', 'Music & Culture', 'Entertainment', 'General'] as const;
 /** Filter key: the ISO country, or "International" for themed channels without one. */
 const regionKey = (c: LiveChannel) => c.countryCode || INTL;
 
@@ -35,6 +36,7 @@ function browserCountry(): string | undefined {
 export const LiveChannelsGrid: React.FC<LiveChannelsGridProps> = ({ onPlayChannel }) => {
   const [channels, setChannels] = useState<LiveChannel[] | null>(null);
   const [country, setCountry] = useState<string>(ALL);
+  const [category, setCategory] = useState<string>('All');
   const [query, setQuery] = useState('');
   const [limit, setLimit] = useState(PAGE);
   // Which streams are reachable right now (checked on the server, in batches as they scroll into the list).
@@ -75,10 +77,11 @@ export const LiveChannelsGrid: React.FC<LiveChannelsGridProps> = ({ onPlayChanne
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return (channels || [])
-      .filter((c) => country === ALL || regionKey(c) === country)
+      .filter((c) => country === ALL || regionKey(c) === country || (country !== INTL && c.source === 'curated'))
+      .filter((c) => category === 'All' || c.category === category)
       .filter((c) => !q || c.name.toLowerCase().includes(q) || c.country.toLowerCase().includes(q))
       .sort((a, b) => Number(Boolean(a.geoBlocked)) - Number(Boolean(b.geoBlocked)));
-  }, [channels, country, query]);
+  }, [channels, country, category, query]);
 
   const offlineCount = filtered.filter((c) => status[c.streamUrl] === 'offline').length;
   const shown = useMemo(() => {
@@ -129,13 +132,46 @@ export const LiveChannelsGrid: React.FC<LiveChannelsGridProps> = ({ onPlayChanne
         description="Free-to-air broadcasters and free ad-supported channels from around the world."
       />
 
+      {/* Category filter chips */}
+      <div className="flex flex-wrap items-center gap-2 mb-6">
+        {CATEGORIES.map((cat) => (
+          <button
+            key={cat}
+            onClick={() => {
+              setCategory(cat);
+              setLimit(PAGE);
+            }}
+            className={`px-3.5 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors ${
+              category === cat
+                ? 'bg-white text-zinc-950'
+                : 'bg-white/[0.05] text-zinc-300 ring-1 ring-inset ring-white/[0.08] hover:bg-white/10 hover:text-white'
+            }`}
+          >
+            {cat}
+          </button>
+        ))}
+      </div>
+
       {/* All channels */}
       <section>
         <div className="flex flex-wrap items-end justify-between gap-3 mb-4">
-          <div>
-            <h2 className="font-display text-lg sm:text-xl font-semibold text-white">Channels</h2>
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="font-display text-lg sm:text-xl font-semibold text-white">Channels</h2>
+              {country !== ALL && (
+                <button
+                  type="button"
+                  onClick={() => chooseCountry(ALL)}
+                  title="Show channels from all countries"
+                  className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-rose-500/15 text-rose-300 ring-1 ring-inset ring-rose-500/30 text-xs font-medium hover:bg-rose-500/25 transition-colors"
+                >
+                  {countryLabel}
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+            </div>
             {channels !== null && (
-              <p className="text-xs text-zinc-500 mt-0.5">
+              <p className="text-xs text-zinc-500">
                 {filtered.length - offlineCount} channel{filtered.length - offlineCount === 1 ? '' : 's'} in {countryLabel}
                 {offlineCount > 0 && (
                   <>
@@ -182,12 +218,17 @@ export const LiveChannelsGrid: React.FC<LiveChannelsGridProps> = ({ onPlayChanne
           {channels === null
             ? Array.from({ length: 12 }).map((_, i) => <div key={i} className="aspect-[4/3] rounded-xl skeleton" />)
             : shown.slice(0, limit).map((channel) => (
-                <LogoCard key={channel.id} channel={channel} status={status[channel.streamUrl]} onPlay={onPlayChannel} />
+                <LogoCard
+                  key={channel.id}
+                  channel={channel}
+                  status={status[channel.streamUrl]}
+                  onPlay={(c) => onPlayChannel(c, shown)}
+                />
               ))}
         </div>
 
         {channels !== null && shown.length === 0 && (
-          <p className="py-16 text-center text-sm text-zinc-500">No channels match. Try another country or search.</p>
+          <p className="py-16 text-center text-sm text-zinc-500">No channels match. Try another country, category, or search.</p>
         )}
         {shown.length > limit && (
           <div className="flex justify-center pt-6">

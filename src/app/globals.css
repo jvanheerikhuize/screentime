@@ -42,6 +42,18 @@ body {
   from { opacity: 0; transform: translateY(12px) scale(0.98); }
 }
 
+/* Native <dialog> top-layer scroll containment and backdrop styling. */
+dialog:modal {
+  overscroll-behavior: contain;
+}
+dialog::backdrop {
+  overflow: hidden;
+  overscroll-behavior: contain;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(12px);
+  animation: fade-in 200ms ease-out;
+}
+
 /* Horizontal carousels and chip rows scroll by swipe/arrows without a visible scrollbar. */
 .no-scrollbar {
   scrollbar-width: none;

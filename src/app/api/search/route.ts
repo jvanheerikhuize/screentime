@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { tmdbService } from '@/lib/metadata/tmdb';
 import { searchAnime } from '@/lib/metadata/anilist';
-import { MediaItem } from '@/types';
+import { LIVE_CHANNELS } from '@/lib/channels/liveChannels';
+import { getFreeTvChannels } from '@/lib/channels/freeTv';
+import { LiveChannel, MediaItem } from '@/types';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -11,13 +13,15 @@ export async function GET(req: NextRequest) {
   const q = (searchParams.get('q') || '').trim();
 
   if (!q) {
-    return NextResponse.json({ results: [] });
+    return NextResponse.json({ results: [], channels: [] });
   }
 
   try {
-    const [catalogResults, animeResults] = await Promise.all([
+    const qLower = q.toLowerCase();
+    const [catalogResults, animeResults, freeTv] = await Promise.all([
       tmdbService.search(q).catch(() => [] as MediaItem[]),
       searchAnime(q, 10).catch(() => [] as MediaItem[]),
+      getFreeTvChannels().catch(() => [] as LiveChannel[]),
     ]);
 
     const seen = new Set<string>();
@@ -34,8 +38,20 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    return NextResponse.json({ results });
+    const curated = LIVE_CHANNELS.map((c) => ({ ...c, source: 'curated' as const }));
+    const curatedUrls = new Set(curated.map((c) => c.streamUrl));
+    const allChannels = [...curated, ...freeTv.filter((c) => !curatedUrls.has(c.streamUrl))];
+    const channels = allChannels
+      .filter(
+        (c) =>
+          c.name.toLowerCase().includes(qLower) ||
+          c.country.toLowerCase().includes(qLower) ||
+          c.category.toLowerCase().includes(qLower)
+      )
+      .slice(0, 8);
+
+    return NextResponse.json({ results, channels });
   } catch {
-    return NextResponse.json({ results: [] });
+    return NextResponse.json({ results: [], channels: [] });
   }
 }

@@ -168,6 +168,7 @@ interface SettingsModalProps {
 export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   const [settings, setSettings] = useState<UserSettings>(DEFAULT_SETTINGS);
   const [integrations, setIntegrations] = useState<IntegrationState | null>(null);
+  const [ffmpegReady, setFfmpegReady] = useState<boolean | null>(null);
   const [newAddonUrl, setNewAddonUrl] = useState('');
   const [addonError, setAddonError] = useState('');
   const [saved, setSaved] = useState(false);
@@ -192,6 +193,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
       .then((r) => r.json())
       .then((d: IntegrationState) => !cancelled && setIntegrations(d))
       .catch(() => {});
+    fetch('/api/health')
+      .then((r) => r.json())
+      .then((d: { ffmpeg?: boolean }) => !cancelled && setFfmpegReady(Boolean(d.ffmpeg)))
+      .catch(() => !cancelled && setFfmpegReady(false));
     return () => {
       cancelled = true;
     };
@@ -230,7 +235,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   };
 
   return (
-    <Modal onClose={onClose} maxWidth="max-w-xl">
+    <Modal onClose={onClose} maxWidth="max-w-xl" label="Settings">
       <div className="p-6 sm:p-8 space-y-6">
         <div className="space-y-1">
           <div className="w-10 h-10 rounded-xl bg-zinc-800 text-zinc-200 border border-zinc-700 flex items-center justify-center mb-3">
@@ -243,7 +248,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
         <form onSubmit={handleSave} className="space-y-6">
           {/* Built-in sources */}
           <section className="space-y-2">
-            <SectionTitle hint="Free and open, no account or key needed.">Built-in sources</SectionTitle>
+            <SectionTitle hint="Free and open, no account or key needed.">Built-in sources & server</SectionTitle>
             <ul className="divide-y divide-zinc-800/80 rounded-2xl border border-zinc-800 bg-zinc-950/80 px-4">
               <SourceRow icon={Film} name="Cinemeta" provides="Movie and series catalog" status="On" />
               <SourceRow
@@ -262,6 +267,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 name="Public trackers"
                 provides="ngosang/trackerslist, refreshed daily"
                 status={integrations ? `${integrations.trackerCount} trackers` : 'On'}
+              />
+              <SourceRow
+                icon={Server}
+                name="FFmpeg transcoder"
+                provides={
+                  ffmpegReady === false
+                    ? 'Missing on server — install ffmpeg for MKV/HEVC conversion'
+                    : 'On-the-fly MKV, HEVC, and audio conversion'
+                }
+                status={ffmpegReady === null ? 'Checking…' : ffmpegReady ? 'Ready' : 'Missing'}
+                on={ffmpegReady !== false}
               />
             </ul>
           </section>

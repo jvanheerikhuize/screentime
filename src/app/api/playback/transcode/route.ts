@@ -12,11 +12,14 @@ export const dynamic = 'force-dynamic';
 export async function GET(req: NextRequest) {
   const input = await resolvePlaybackInput(req);
   if (!input) return new Response('Missing or invalid magnet/url', { status: 400 });
-  const start = Math.max(0, parseFloat(new URL(req.url).searchParams.get('start') || '0') || 0);
+  const searchParams = new URL(req.url).searchParams;
+  const start = Math.max(0, parseFloat(searchParams.get('start') || '0') || 0);
+  const rawAudio = searchParams.get('audioStream');
+  const audioStreamIndex = rawAudio !== null && /^\d+$/.test(rawAudio) ? parseInt(rawAudio, 10) : undefined;
 
   try {
     const info = await probeMedia(input);
-    const body = transcodeToMp4(input, start, info, req.signal);
+    const body = transcodeToMp4(input, start, info, req.signal, audioStreamIndex);
     return new Response(body, {
       headers: {
         'Content-Type': 'video/mp4',

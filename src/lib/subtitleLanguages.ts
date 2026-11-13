@@ -57,3 +57,15 @@ export function setPreferredSubtitleLang(lang: string) {
     // storage unavailable
   }
 }
+
+const langNames = typeof Intl !== 'undefined' && Intl.DisplayNames ? new Intl.DisplayNames(['en'], { type: 'language' }) : null;
+
+export function formatLang(code: string): string {
+  const norm = normalizeSubtitleLang(code);
+  if (!norm || norm === 'und') return 'Unknown';
+  try {
+    return langNames?.of(norm) || code.toUpperCase();
+  } catch {
+    return code.toUpperCase();
+  }
+}

@@ -20,8 +20,20 @@ export const PosterCard: React.FC<PosterCardProps> = ({ item, onSelect, onPlay, 
   const year = yearOf(item);
   const showImage = Boolean(item.posterPath) && !failed;
   return (
-    <div onClick={() => onSelect(item)} className={`group cursor-pointer select-none ${className}`}>
-      <div className="relative aspect-[2/3] w-full overflow-hidden rounded-xl bg-zinc-900 ring-1 ring-white/[0.06] shadow-lg shadow-black/40 transition-all duration-300 group-hover:ring-white/25 group-hover:shadow-2xl group-hover:shadow-rose-950/40 group-hover:-translate-y-1">
+    <div
+      role="button"
+      tabIndex={0}
+      aria-label={item.title}
+      onClick={() => onSelect(item)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onSelect(item);
+        }
+      }}
+      className={`group cursor-pointer select-none rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 ${className}`}
+    >
+      <div className="relative aspect-[2/3] w-full overflow-hidden rounded-xl bg-zinc-900 ring-1 ring-white/[0.06] shadow-lg shadow-black/40 transition-all duration-300 group-hover:ring-white/25 group-hover:shadow-2xl group-hover:shadow-rose-950/40 group-hover:-translate-y-1 group-focus-visible:ring-white/25 group-focus-visible:-translate-y-1">
         {showImage && !loaded && <div className="absolute inset-0 skeleton" />}
         {showImage ? (
           <img
