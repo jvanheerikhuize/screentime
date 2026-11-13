@@ -37,7 +37,12 @@ export async function GET(
     }
 
     const details = await tmdbService.getDetails(id, type);
-    const staticStreams = getStreamsForMedia(id);
+    // Built-in open-movie streams are keyed by TMDB id.
+    const staticStreams = getStreamsForMedia(id).length
+      ? getStreamsForMedia(id)
+      : details?.tmdbId
+        ? getStreamsForMedia(details.tmdbId)
+        : [];
 
     const imdbId = searchParams.get('imdbId') || details?.imdbId;
     const mediaTitle = details?.title || 'Media';

@@ -4,8 +4,8 @@ import React, { useState, useEffect } from 'react';
 import { Navbar } from '@/components/Navbar';
 import { HeroBanner } from '@/components/HeroBanner';
 import { MediaCarousel } from '@/components/MediaCarousel';
-import { MediaDetailModal } from '@/components/MediaDetailModal';
-import { VideoPlayerModal } from '@/components/VideoPlayerModal';
+import { MediaDetailModal, PlaybackContext } from '@/components/MediaDetailModal';
+import { VideoPlayerModal, SubtitleQuery } from '@/components/VideoPlayerModal';
 import { DirectStreamModal } from '@/components/DirectStreamModal';
 import { SettingsModal } from '@/components/SettingsModal';
 import { LiveChannelsGrid } from '@/components/LiveChannelsGrid';
@@ -41,8 +41,10 @@ export default function Home() {
     title: string;
     streamUrl: string;
     magnet?: string;
+    fileIndex?: number;
     isTorrent: boolean;
     isLive?: boolean;
+    subtitleQuery?: SubtitleQuery;
   } | null>(null);
 
   useEffect(() => {
@@ -61,28 +63,35 @@ export default function Home() {
   const handlePlayMedia = (media: MediaItem) => {
     const sources = OPEN_SOURCE_STREAMS[String(media.id)] || OPEN_SOURCE_STREAMS[String(media.tmdbId)] || [];
     if (sources.length > 0) {
-      handlePlaySource(sources[0], media);
+      handlePlaySource(sources[0], media, {});
     } else {
       setSelectedMedia(media);
     }
   };
 
-  const handlePlaySource = (source: StreamSource, media: MediaItem) => {
+  const handlePlaySource = (source: StreamSource, media: MediaItem, context: PlaybackContext) => {
     setSelectedMedia(null);
+    const episodeTag = context.season ? ` · S${context.season}E${context.episode}` : '';
+    const subtitleQuery: SubtitleQuery | undefined = media.imdbId
+      ? { imdbId: media.imdbId, mediaType: media.mediaType, season: context.season, episode: context.episode }
+      : undefined;
     if (source.type === 'torrent' && source.magnet) {
       setActivePlayer({
         isOpen: true,
-        title: `${media.title} (${source.quality})`,
+        title: `${media.title}${episodeTag}`,
         streamUrl: `/api/stream?magnet=${encodeURIComponent(source.magnet)}`,
         magnet: source.magnet,
+        fileIndex: source.fileIdx,
         isTorrent: true,
+        subtitleQuery,
       });
     } else if (source.url) {
       setActivePlayer({
         isOpen: true,
-        title: `${media.title} (${source.quality})`,
+        title: `${media.title}${episodeTag}`,
         streamUrl: source.url,
         isTorrent: false,
+        subtitleQuery,
       });
     }
   };
@@ -206,7 +215,6 @@ export default function Home() {
           media={selectedMedia}
           onClose={() => setSelectedMedia(null)}
           onPlaySource={handlePlaySource}
-          onPlayDirectMagnet={handlePlayDirectMagnet}
         />
       )}
 
@@ -232,6 +240,8 @@ export default function Home() {
           magnet={activePlayer.magnet}
           isTorrent={activePlayer.isTorrent}
           isLive={activePlayer.isLive}
+          fileIndex={activePlayer.fileIndex}
+          subtitleQuery={activePlayer.subtitleQuery}
           onClose={() => setActivePlayer(null)}
         />
       )}

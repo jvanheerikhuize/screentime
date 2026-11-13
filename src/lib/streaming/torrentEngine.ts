@@ -20,6 +20,48 @@ interface ManagedTorrent {
     lastSampleTime: number;
   };
   readyPromise: Promise<void>;
+  error?: string;
+  // High-priority piece ranges for the selected file's head and tail (so playback can start fast).
+  edgeSelections: { from: number; to: number }[];
+}
+
+export interface BufferStatus {
+  state: 'connecting' | 'buffering' | 'ready' | 'error';
+  error?: string;
+  fileName?: string;
+  fileSize: number;
+  /** Contiguous bytes downloaded from the start of the selected file. */
+  headBytes: number;
+  /** Bytes we want at the start before handing the stream to the player. */
+  headTarget: number;
+  tailReady: boolean;
+  /** Contiguous bytes downloaded from `fromByte` (the player's position) onward. */
+  aheadBytes: number;
+  complete: boolean;
+  peers: number;
+  downloadSpeed: number;
+  progress: number;
+}
+
+// Pre-buffer ~2% of the file (16-64 MB) before playback; for a 2 GB / 2 h film that's
+// roughly 2-3 minutes of video. The tail holds the MP4 index (moov atom) for many files.
+const HEAD_MIN = 16 * 1024 * 1024;
+const HEAD_MAX = 64 * 1024 * 1024;
+const TAIL_BYTES = 4 * 1024 * 1024;
+
+// Runtime APIs of torrent-stream that @types/torrent-stream doesn't declare.
+interface PieceSelectingEngine {
+  select(from: number, to: number, priority: boolean): void;
+  deselect(from: number, to: number, priority: boolean): void;
+  bitfield?: { get(index: number): boolean };
+  torrent?: { pieceLength: number };
+  swarm?: { wires?: unknown[] };
+}
+const withPieces = (engine: TorrentStream.TorrentEngine) => engine as unknown as PieceSelectingEngine;
+const fileOffset = (file: TorrentStream.TorrentFile) => (file as unknown as { offset: number }).offset;
+
+function headTargetFor(fileSize: number): number {
+  return Math.min(fileSize, Math.max(HEAD_MIN, Math.min(HEAD_MAX, Math.round(fileSize * 0.02))));
 }
 
 // Global cache to survive Next.js module reloading in dev mode
@@ -74,6 +116,17 @@ export class TorrentEngineManager {
   public async getOrCreateEngine(magnetUri: string): Promise<ManagedTorrent> {
     const cleanMagnet = magnetUri.trim();
 
+    // A swarm that failed to connect gets a fresh attempt instead of failing forever.
+    const stale = this.torrents.get(cleanMagnet);
+    if (stale?.error) {
+      try {
+        stale.engine.destroy(() => {});
+      } catch {
+        // ignore
+      }
+      this.torrents.delete(cleanMagnet);
+    }
+
     if (this.torrents.has(cleanMagnet)) {
       const existing = this.torrents.get(cleanMagnet)!;
       existing.lastAccessed = Date.now();
@@ -113,13 +166,15 @@ export class TorrentEngineManager {
         lastSampleTime: Date.now(),
       },
       readyPromise,
+      edgeSelections: [],
     };
 
     this.torrents.set(cleanMagnet, managed);
 
     const timeout = setTimeout(() => {
       if (managed.files.length === 0) {
-        rejectReady(new Error('Timeout connecting to torrent swarm metadata'));
+        managed.error = 'Could not reach any peers for this torrent. Try a source with more seeds.';
+        rejectReady(new Error(managed.error));
       }
     }, 45000);
 
@@ -146,6 +201,7 @@ export class TorrentEngineManager {
       engine.files.forEach((f) => f.deselect());
       if (managed.selectedFile) {
         managed.selectedFile.select();
+        this.prioritizeEdges(managed);
       }
 
       resolveReady();
@@ -203,15 +259,136 @@ export class TorrentEngineManager {
     };
   }
 
+  /** Ask the swarm for the selected file's first and last pieces before anything else. */
+  private prioritizeEdges(managed: ManagedTorrent) {
+    const file = managed.selectedFile;
+    const engine = withPieces(managed.engine);
+    const pieceLength = engine.torrent?.pieceLength;
+    if (!file || !pieceLength) return;
+
+    for (const sel of managed.edgeSelections ?? []) engine.deselect(sel.from, sel.to, true);
+
+    const offset = fileOffset(file);
+    const first = Math.floor(offset / pieceLength);
+    const last = Math.floor((offset + file.length - 1) / pieceLength);
+    const headEnd = Math.min(last, Math.floor((offset + headTargetFor(file.length) - 1) / pieceLength));
+    const tailStart = Math.max(first, Math.floor((offset + file.length - TAIL_BYTES) / pieceLength));
+
+    managed.edgeSelections = [
+      { from: first, to: headEnd },
+      { from: tailStart, to: last },
+    ];
+    for (const sel of managed.edgeSelections) engine.select(sel.from, sel.to, true);
+  }
+
+  /**
+   * Non-blocking readiness check used by the player before it starts playback.
+   * Starts the swarm on first call.
+   */
+  public getBufferStatus(magnetUri: string, fileIndex?: number, fromByte = 0): BufferStatus {
+    const key = magnetUri.trim();
+    // Only start a swarm here; a failed one is reported (not silently restarted) so the
+    // player can show the error. Re-opening the player calls getOrCreateEngine, which retries.
+    if (!this.torrents.has(key)) {
+      this.getOrCreateEngine(key).catch(() => {});
+    }
+    const managed = this.torrents.get(key);
+    const empty = { fileSize: 0, headBytes: 0, headTarget: 0, tailReady: false, aheadBytes: 0, complete: false, peers: 0, downloadSpeed: 0, progress: 0 };
+    if (!managed) return { state: 'connecting', ...empty };
+    managed.lastAccessed = Date.now();
+    if (managed.error) return { state: 'error', error: managed.error, ...empty };
+
+    const engine = withPieces(managed.engine);
+    const peers = engine.swarm?.wires?.length || 0;
+    const bitfield = engine.bitfield;
+    const pieceLength = engine.torrent?.pieceLength;
+    if (!managed.selectedFile || !bitfield || !pieceLength) {
+      return { state: 'connecting', ...empty, peers };
+    }
+
+    if (fileIndex !== undefined && !isNaN(fileIndex) && managed.files[fileIndex]) {
+      this.selectFile(key, fileIndex);
+    }
+
+    const file = managed.selectedFile;
+    const offset = fileOffset(file);
+    const first = Math.floor(offset / pieceLength);
+    const last = Math.floor((offset + file.length - 1) / pieceLength);
+
+    // Contiguous downloaded bytes from the start of the file.
+    let piece = first;
+    while (piece <= last && bitfield.get(piece)) piece++;
+    const headBytes = Math.max(0, Math.min(file.length, piece * pieceLength - offset));
+
+    const tailStart = Math.max(first, Math.floor((offset + file.length - TAIL_BYTES) / pieceLength));
+    let tailReady = true;
+    for (let p = tailStart; p <= last; p++) {
+      if (!bitfield.get(p)) {
+        tailReady = false;
+        break;
+      }
+    }
+
+    let completed = 0;
+    for (let p = first; p <= last; p++) if (bitfield.get(p)) completed++;
+
+    // Contiguous bytes available from the player's current position.
+    let aheadBytes = headBytes;
+    const from = Math.max(0, Math.min(fromByte, file.length - 1));
+    if (from > 0) {
+      const startPiece = Math.floor((offset + from) / pieceLength);
+      let p = startPiece;
+      while (p <= last && bitfield.get(p)) p++;
+      aheadBytes = p === startPiece ? 0 : Math.max(0, Math.min(file.length, p * pieceLength - offset) - from);
+    }
+
+    this.sampleSpeed(managed);
+    const headTarget = headTargetFor(file.length);
+    const complete = completed === last - first + 1;
+    return {
+      state: (headBytes >= headTarget && tailReady) || complete ? 'ready' : 'buffering',
+      fileName: file.name,
+      fileSize: file.length,
+      headBytes,
+      headTarget,
+      tailReady,
+      aheadBytes,
+      complete,
+      peers,
+      downloadSpeed: managed.stats.downloadSpeed,
+      progress: completed / (last - first + 1),
+    };
+  }
+
+  /** Refresh the download-rate estimate (the 'download' event alone leaves it stale when idle). */
+  private sampleSpeed(managed: ManagedTorrent) {
+    const now = Date.now();
+    const elapsed = (now - managed.stats.lastSampleTime) / 1000;
+    if (elapsed < 1) return;
+    const downloaded = (managed.engine.swarm as unknown as { downloaded?: number })?.downloaded || 0;
+    managed.stats.downloadSpeed = Math.max(0, (downloaded - managed.stats.lastDownloadSample) / elapsed);
+    managed.stats.lastDownloadSample = downloaded;
+    managed.stats.downloaded = downloaded;
+    managed.stats.lastSampleTime = now;
+  }
+
   public selectFile(magnetUri: string, fileIndex: number): TorrentStream.TorrentFile | null {
     const managed = this.torrents.get(magnetUri.trim());
     if (!managed || !managed.files[fileIndex]) return null;
 
+    if (managed.selectedFile === managed.files[fileIndex]) return managed.selectedFile;
+
     managed.files.forEach((f) => f.deselect());
     managed.selectedFile = managed.files[fileIndex];
     managed.selectedFile.select();
+    this.prioritizeEdges(managed);
     return managed.selectedFile;
   }
 }
 
+// The manager survives dev hot-reloads (so active swarms aren't dropped), but must pick up the
+// reloaded class's methods; otherwise new API routes call methods the stale instance lacks.
+if (global.__torrentEngineManager && Object.getPrototypeOf(global.__torrentEngineManager) !== TorrentEngineManager.prototype) {
+  Object.setPrototypeOf(global.__torrentEngineManager, TorrentEngineManager.prototype);
+}
 export const torrentManager = global.__torrentEngineManager ?? (global.__torrentEngineManager = new TorrentEngineManager());

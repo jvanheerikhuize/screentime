@@ -7,6 +7,15 @@ import {
 } from 'lucide-react';
 import { UserSettings } from '@/types';
 import { DEFAULT_ADDON_URLS } from '@/lib/scrapers/stremioAddons';
+import { Modal } from './Modal';
+import { setPreferredSubtitleLang } from '@/lib/subtitleLanguages';
+
+const SUBTITLE_LANGUAGES: [string, string][] = [
+  ['off', 'Off'], ['en', 'English'], ['nl', 'Dutch'], ['de', 'German'], ['fr', 'French'], ['es', 'Spanish'],
+  ['it', 'Italian'], ['pt', 'Portuguese'], ['pl', 'Polish'], ['sv', 'Swedish'], ['da', 'Danish'], ['no', 'Norwegian'],
+  ['fi', 'Finnish'], ['tr', 'Turkish'], ['ru', 'Russian'], ['el', 'Greek'], ['cs', 'Czech'], ['hu', 'Hungarian'],
+  ['ro', 'Romanian'], ['ar', 'Arabic'], ['he', 'Hebrew'], ['ja', 'Japanese'], ['ko', 'Korean'], ['zh', 'Chinese'],
+];
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -133,15 +142,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md overflow-y-auto animate-in fade-in duration-200">
-      <div className="relative w-full max-w-xl bg-zinc-900 border border-zinc-800 rounded-3xl p-6 sm:p-8 shadow-2xl space-y-6 my-8 max-h-[90vh] overflow-y-auto">
-        {/* Close */}
-        <button
-          onClick={onClose}
-          className="absolute top-4 right-4 p-2 rounded-full bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white transition-colors"
-        >
-          <X className="w-4 h-4" />
-        </button>
+    <Modal onClose={onClose} maxWidth="max-w-xl">
+      <div className="p-6 sm:p-8 space-y-6">
 
         {/* Header */}
         <div className="space-y-1">
@@ -378,6 +380,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
             </div>
           </div>
 
+          {/* Subtitles */}
+          <div className="space-y-1.5">
+            <label className="block text-xs font-semibold text-zinc-300">Subtitle language</label>
+            <select
+              value={settings.defaultSubtitleLang}
+              onChange={(e) => {
+                setSettings({ ...settings, defaultSubtitleLang: e.target.value });
+                setPreferredSubtitleLang(e.target.value);
+              }}
+              className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none focus:border-rose-500"
+            >
+              {SUBTITLE_LANGUAGES.map(([code, name]) => (
+                <option key={code} value={code}>
+                  {name}
+                </option>
+              ))}
+            </select>
+            <p className="text-[11px] text-zinc-500">Turned on automatically when available. You can also change it in the player (CC).</p>
+          </div>
+
           {/* Save Button */}
           <button
             type="submit"
@@ -394,6 +416,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
           </button>
         </form>
       </div>
-    </div>
+    </Modal>
   );
 };
