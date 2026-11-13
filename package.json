@@ -1,12 +1,12 @@
 {
-  "name": "screentime",
+  "name": "lumen",
   "version": "0.1.0",
   "private": true,
   "description": "Self-hosted streaming dashboard: free catalogs, anime, live TV and torrent streaming with on-the-fly conversion.",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/jvanheerikhuize/screentime.git"
+    "url": "https://github.com/jvanheerikhuize/lumen.git"
   },
   "engines": {
     "node": ">=22.18"

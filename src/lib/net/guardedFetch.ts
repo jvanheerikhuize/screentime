@@ -46,7 +46,8 @@ export async function guardedFetch(
 }
 
 /** Custom stream addons on your own network are refused unless the server opts in. */
-export const ALLOW_PRIVATE_ADDONS = process.env.SCREENTIME_ALLOW_PRIVATE_ADDONS === '1';
+export const ALLOW_PRIVATE_ADDONS =
+  process.env.LUMEN_ALLOW_PRIVATE_ADDONS === '1' || process.env.SCREENTIME_ALLOW_PRIVATE_ADDONS === '1';
 
 /** Read a text response up to maxBytes, aborting if the upstream body exceeds the limit. */
 export async function readBoundedText(res: Response, maxBytes = 2 * 1024 * 1024): Promise<string> {

@@ -19,8 +19,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'Screentime',
-  description: 'Movies, series and live TV, streamed on demand.',
+  title: 'Lumen',
+  description: 'Movies, series, anime and live TV, streamed on demand.',
 };
 
 export default function RootLayout({

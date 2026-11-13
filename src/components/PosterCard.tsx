@@ -1,24 +1,40 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Film, Play, Star } from 'lucide-react';
+import { Film, Play, Star, X } from 'lucide-react';
 import { MediaItem } from '@/types';
 
 interface PosterCardProps {
   item: MediaItem;
   onSelect: (item: MediaItem) => void;
   onPlay?: (item: MediaItem) => void;
+  onRemove?: (item: MediaItem) => void;
+  progressRatio?: number;
+  progressLabel?: string;
   className?: string;
 }
 
 const yearOf = (item: MediaItem) => (item.releaseDate || item.firstAirDate)?.split('-')[0];
 
 /** Poster with title underneath; used by carousels and browse grids. */
-export const PosterCard: React.FC<PosterCardProps> = ({ item, onSelect, onPlay, className = '' }) => {
+export const PosterCard: React.FC<PosterCardProps> = ({
+  item,
+  onSelect,
+  onPlay,
+  onRemove,
+  progressRatio,
+  progressLabel,
+  className = '',
+}) => {
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
   const year = yearOf(item);
   const showImage = Boolean(item.posterPath) && !failed;
+  const clampedRatio =
+    typeof progressRatio === 'number' && Number.isFinite(progressRatio) && progressRatio > 0
+      ? Math.min(1, Math.max(0.04, progressRatio))
+      : null;
+
   return (
     <div
       role="button"
@@ -65,17 +81,40 @@ export const PosterCard: React.FC<PosterCardProps> = ({ item, onSelect, onPlay, 
             <Play className="w-4 h-4 fill-current ml-0.5" />
           </button>
         )}
+        {onRemove && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onRemove(item);
+            }}
+            aria-label={`Remove ${item.title} from Continue Watching`}
+            title="Remove from Continue Watching"
+            className="absolute top-2 left-2 w-7 h-7 rounded-full bg-black/75 hover:bg-rose-600 text-zinc-200 hover:text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        )}
         {item.voteAverage > 0 && (
           <span className="absolute top-2 right-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-black/60 backdrop-blur-md text-[11px] font-semibold text-white">
             <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
             {item.voteAverage.toFixed(1)}
           </span>
         )}
+        {clampedRatio !== null && (
+          <div className="absolute inset-x-0 bottom-0 h-1.5 bg-black/70">
+            <div
+              className="h-full bg-gradient-to-r from-rose-500 to-orange-400 transition-all"
+              style={{ width: `${Math.round(clampedRatio * 100)}%` }}
+            />
+          </div>
+        )}
       </div>
       <div className="pt-2.5 px-0.5">
         <h3 className="text-sm font-medium text-zinc-100 truncate group-hover:text-white">{item.title}</h3>
         <p className="text-xs text-zinc-500 mt-0.5 truncate">
-          {[year, item.genres?.[0]].filter(Boolean).join(' · ') || (item.mediaType === 'tv' ? 'Series' : 'Movie')}
+          {progressLabel ||
+            [year, item.genres?.[0]].filter(Boolean).join(' · ') ||
+            (item.mediaType === 'tv' ? 'Series' : 'Movie')}
         </p>
       </div>
     </div>

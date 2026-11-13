@@ -203,10 +203,21 @@ export function extractEmbeddedSubtitleSrt(input: string, streamIndex: number): 
   return promise;
 }
 
+const MAX_CONCURRENT_TRANSCODES = 2;
+const activeTranscodes = new Map<string, () => void>();
+
+export function getConfiguredHwAccel(): 'vaapi' | 'nvenc' | 'qsv' | 'videotoolbox' | 'none' {
+  const raw = (process.env.LUMEN_HWACCEL || process.env.SCREENTIME_HWACCEL || '').trim().toLowerCase();
+  if (raw === 'vaapi' || raw === 'nvenc' || raw === 'qsv' || raw === 'videotoolbox') return raw;
+  return 'none';
+}
+
 /**
  * Stream `input` from `start` seconds as fragmented MP4. Video is copied when it's H.264
- * (cheap remux), otherwise encoded to H.264; audio becomes stereo AAC unless already AAC/MP3.
- * ffmpeg is killed as soon as the HTTP client goes away.
+ * (cheap remux), otherwise encoded to H.264 (using hardware acceleration when LUMEN_HWACCEL is set);
+ * audio becomes stereo AAC unless already AAC/MP3.
+ * Any previous transcode for the same `input` is immediately terminated on seek, and total concurrent
+ * transcodes are capped at MAX_CONCURRENT_TRANSCODES.
  */
 export function transcodeToMp4(
   input: string,
@@ -215,12 +226,31 @@ export function transcodeToMp4(
   signal: AbortSignal,
   audioStreamIndex?: number
 ): ReadableStream<Uint8Array> {
+  // Terminate any existing transcode for the same input (e.g. rapid scrubbing/seeking).
+  const existingStop = activeTranscodes.get(input);
+  if (existingStop) {
+    existingStop();
+    activeTranscodes.delete(input);
+  }
+  // Enforce global concurrency cap so low-power home servers never overload CPU.
+  while (activeTranscodes.size >= MAX_CONCURRENT_TRANSCODES) {
+    const oldestKey = activeTranscodes.keys().next().value;
+    if (!oldestKey) break;
+    activeTranscodes.get(oldestKey)?.();
+    activeTranscodes.delete(oldestKey);
+  }
+
   const chosenAudio =
     (audioStreamIndex !== undefined ? info.audioStreams.find((a) => a.index === audioStreamIndex) : undefined) ||
     info.audio;
   const copyAudio = chosenAudio ? chosenAudio.codec === 'aac' || chosenAudio.codec === 'mp3' : true;
+  const hwAccel = getConfiguredHwAccel();
+  const downscale = (info.video?.height || 0) > 1080;
 
   const args = ['-hide_banner', '-loglevel', 'error', '-nostdin'];
+  if (!info.copyVideo && hwAccel === 'vaapi') {
+    args.push('-vaapi_device', process.env.LUMEN_VAAPI_DEVICE || '/dev/dri/renderD128');
+  }
   if (start > 0) args.push('-ss', start.toFixed(2));
   args.push('-i', input);
   if (info.video) args.push('-map', `0:${info.video.index}`);
@@ -228,9 +258,21 @@ export function transcodeToMp4(
 
   if (info.copyVideo) {
     args.push('-c:v', 'copy');
+  } else if (hwAccel === 'vaapi') {
+    const vf = downscale ? 'format=nv12,hwupload,scale_vaapi=w=-2:h=1080' : 'format=nv12,hwupload';
+    args.push('-vf', vf, '-c:v', 'h264_vaapi', '-qp', '24');
+  } else if (hwAccel === 'nvenc') {
+    args.push('-c:v', 'h264_nvenc', '-preset', 'p4', '-cq', '23', '-pix_fmt', 'yuv420p');
+    if (downscale) args.push('-vf', 'scale=-2:1080');
+  } else if (hwAccel === 'qsv') {
+    args.push('-c:v', 'h264_qsv', '-global_quality', '23');
+    if (downscale) args.push('-vf', 'scale=-2:1080');
+  } else if (hwAccel === 'videotoolbox') {
+    args.push('-c:v', 'h264_videotoolbox', '-q:v', '65', '-pix_fmt', 'yuv420p');
+    if (downscale) args.push('-vf', 'scale=-2:1080');
   } else {
     args.push('-c:v', 'libx264', '-preset', 'veryfast', '-crf', '22', '-pix_fmt', 'yuv420p');
-    if ((info.video?.height || 0) > 1080) args.push('-vf', 'scale=-2:1080');
+    if (downscale) args.push('-vf', 'scale=-2:1080');
   }
   if (chosenAudio) {
     if (copyAudio) args.push('-c:a', 'copy');
@@ -242,8 +284,10 @@ export function transcodeToMp4(
   let closed = false;
   const stop = () => {
     closed = true;
+    if (activeTranscodes.get(input) === stop) activeTranscodes.delete(input);
     if (proc.exitCode === null) proc.kill('SIGKILL');
   };
+  activeTranscodes.set(input, stop);
   signal.addEventListener('abort', stop, { once: true });
 
   let stderr = '';

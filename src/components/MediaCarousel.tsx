@@ -11,11 +11,21 @@ interface MediaCarouselProps {
   items: MediaItem[];
   onSelectMedia: (item: MediaItem) => void;
   onPlayMedia?: (item: MediaItem) => void;
+  onRemoveItem?: (item: MediaItem) => void;
+  progressByMediaId?: Record<string, { ratio: number; label: string }>;
 }
 
 const CARD = 'flex-none w-[140px] sm:w-[168px] lg:w-[184px] snap-start';
 
-export const MediaCarousel: React.FC<MediaCarouselProps> = ({ title, subtitle, items, onSelectMedia, onPlayMedia }) => {
+export const MediaCarousel: React.FC<MediaCarouselProps> = ({
+  title,
+  subtitle,
+  items,
+  onSelectMedia,
+  onPlayMedia,
+  onRemoveItem,
+  progressByMediaId,
+}) => {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const scroll = (direction: 1 | -1) => {
@@ -43,9 +53,21 @@ export const MediaCarousel: React.FC<MediaCarouselProps> = ({ title, subtitle, i
       </div>
 
       <div ref={scrollRef} className="flex gap-4 overflow-x-auto no-scrollbar snap-x pt-1 pb-2 -mx-4 px-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8 scroll-px-4 sm:scroll-px-6 lg:scroll-px-8 [mask-image:linear-gradient(to_right,black_calc(100%-3rem),transparent)]">
-        {items.map((item) => (
-          <PosterCard key={item.id} item={item} onSelect={onSelectMedia} onPlay={onPlayMedia} className={CARD} />
-        ))}
+        {items.map((item) => {
+          const prog = progressByMediaId?.[String(item.id)];
+          return (
+            <PosterCard
+              key={item.id}
+              item={item}
+              onSelect={onSelectMedia}
+              onPlay={onPlayMedia}
+              onRemove={onRemoveItem}
+              progressRatio={prog?.ratio}
+              progressLabel={prog?.label}
+              className={CARD}
+            />
+          );
+        })}
       </div>
     </section>
   );

@@ -35,10 +35,10 @@ export const LogoMark: React.FC<{ className?: string }> = ({ className = 'w-9 h-
 };
 
 export const Logo: React.FC<{ onClick?: () => void }> = ({ onClick }) => (
-  <button onClick={onClick} className="flex items-center gap-2.5 group" aria-label="Screentime home">
+  <button onClick={onClick} className="flex items-center gap-2.5 group" aria-label="Lumen home">
     <LogoMark className="w-9 h-9 drop-shadow-[0_6px_18px_rgba(244,63,94,0.45)] transition-transform duration-300 group-hover:rotate-[-6deg] group-hover:scale-105" />
     <span className="font-display text-[1.35rem] font-bold tracking-tight leading-none text-white">
-      screen<span className="bg-gradient-to-r from-rose-400 to-orange-300 bg-clip-text text-transparent">time</span>
+      lu<span className="bg-gradient-to-r from-rose-400 to-orange-300 bg-clip-text text-transparent">men</span>
     </span>
   </button>
 );

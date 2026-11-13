@@ -1,11 +1,11 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Shuffle, Sparkles } from 'lucide-react';
 import { Navbar, AppTab } from '@/components/Navbar';
 import { HeroBanner } from '@/components/HeroBanner';
 import { MediaCarousel, CarouselSkeleton } from '@/components/MediaCarousel';
-import { MediaDetailModal, PlaybackContext } from '@/components/MediaDetailModal';
+import { buildMediaRequest, MediaDetailModal, PlaybackContext } from '@/components/MediaDetailModal';
 import { VideoPlayerModal, SubtitleQuery, PlayableSource } from '@/components/VideoPlayerModal';
 import { rankSources } from '@/lib/streaming/pickSource';
 import { SettingsModal } from '@/components/SettingsModal';
@@ -27,6 +27,14 @@ import {
   toggleFavoriteGenre,
   toggleLikedMedia,
 } from '@/lib/tasteProfile';
+import {
+  getMediaProgress,
+  getWatchProgressList,
+  removeWatchProgress,
+  saveWatchProgress,
+  syncStateFromServer,
+  WatchProgressEntry,
+} from '@/lib/watchProgress';
 
 interface CatalogRow {
   key: string;
@@ -41,6 +49,45 @@ interface HomeData {
 }
 
 const VALID_TABS = new Set<AppTab>(['home', 'movies', 'tv', 'anime', 'live']);
+
+/** Compute the next (season, episode) in a TV/anime series. */
+function findNextEpisode(
+  media: MediaItem,
+  season: number,
+  episode: number
+): { season: number; episode: number; label: string } | null {
+  if (media.mediaType !== 'tv') return null;
+  const seasons = media.seasons || [];
+  if (seasons.length > 0) {
+    const curSeason = seasons.find((s) => s.seasonNumber === season);
+    if (curSeason) {
+      const nextEpInSeason = curSeason.episodes.find((e) => e.episodeNumber === episode + 1);
+      if (nextEpInSeason) {
+        return {
+          season,
+          episode: nextEpInSeason.episodeNumber,
+          label: media.anime ? `Episode ${nextEpInSeason.episodeNumber}` : `S${season} · E${nextEpInSeason.episodeNumber}`,
+        };
+      }
+      const nextSeason = seasons.find((s) => s.seasonNumber === season + 1 && s.episodes.length > 0);
+      if (nextSeason) {
+        const firstEp = nextSeason.episodes[0].episodeNumber;
+        return {
+          season: nextSeason.seasonNumber,
+          episode: firstEp,
+          label: `S${nextSeason.seasonNumber} · E${firstEp}`,
+        };
+      }
+      return null;
+    }
+  }
+  const nextEp = episode + 1;
+  return {
+    season,
+    episode: nextEp,
+    label: media.anime ? `Episode ${nextEp}` : `S${season} · E${nextEp}`,
+  };
+}
 
 /** Rows built from the bundled sample catalog; only used if the catalog API is unreachable. */
 function fallbackHome(data?: { featured?: MediaItem; trending?: MediaItem[]; movies?: MediaItem[]; series?: MediaItem[] }): HomeData {
@@ -64,15 +111,21 @@ export default function Home() {
     likedItems: [],
     recentHeroIds: [],
   });
+  const [watchProgress, setWatchProgress] = useState<WatchProgressEntry[]>([]);
 
   const [selectedMedia, setSelectedMedia] = useState<MediaItem | null>(null);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [activePlayer, setActivePlayer] = useState<{
+    key: string;
     title: string;
     sources: PlayableSource[];
     initialSourceIndex?: number;
+    initialStartTime?: number;
     isLive?: boolean;
     subtitleQuery?: SubtitleQuery;
+    media?: MediaItem;
+    season?: number;
+    episode?: number;
   } | null>(null);
 
   // Sync initial state and browser Back/Forward with URL search params (?tab=, ?genre=, ?media=).
@@ -121,6 +174,9 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    syncStateFromServer().then((synced) => {
+      setWatchProgress(synced.watchProgress);
+    });
     fetch('/api/media/trending')
       .then((res) => res.json())
       .then((data) => {
@@ -133,6 +189,7 @@ export default function Home() {
         const hero = pickRandomHero(base.rows, currentTaste) ?? base.featured;
         const updatedTaste = hero ? rememberHeroId(hero.id) : currentTaste;
         setTaste(updatedTaste);
+        setWatchProgress(getWatchProgressList());
         const nextHome: HomeData = {
           featured: hero,
           rows: personalizeRows(base.rows, updatedTaste),
@@ -191,14 +248,17 @@ export default function Home() {
     window.scrollTo({ top: 0 });
   };
 
-  const selectMedia = (media: MediaItem | null) => {
-    if (media) {
-      const nextProfile = recordMediaInteraction(media, 1);
-      setTaste(nextProfile);
-    }
-    setSelectedMedia(media);
-    updateUrl(activeTab, activeGenre, media);
-  };
+  const selectMedia = useCallback(
+    (media: MediaItem | null) => {
+      if (media) {
+        const nextProfile = recordMediaInteraction(media, 1);
+        setTaste(nextProfile);
+      }
+      setSelectedMedia(media);
+      updateUrl(activeTab, activeGenre, media);
+    },
+    [activeTab, activeGenre, updateUrl]
+  );
 
   const handleGenreChange = (genre: string | null) => {
     setActiveGenre(genre);
@@ -210,40 +270,123 @@ export default function Home() {
       .filter((s) => (s.type === 'torrent' ? Boolean(s.magnet) : Boolean(s.magnet || s.url)))
       .map((s) => (s.magnet ? { magnet: s.magnet, fileIdx: s.fileIdx, label: s.name } : { url: s.url, label: s.name }));
 
-  const handlePlaySource = (sources: StreamSource[], media: MediaItem, context: PlaybackContext) => {
-    const playable = toPlayable(sources);
-    if (!playable.length) return;
-    const nextProfile = recordMediaInteraction(media, 3);
-    setTaste(nextProfile);
-    selectMedia(null);
-    const episodeTag = context.season ? ` · S${context.season}E${context.episode}` : '';
-    const subtitleQuery: SubtitleQuery | undefined = media.anime
-      ? media.anime.imdbId
-        ? { imdbId: media.anime.imdbId, mediaType: media.mediaType, season: media.anime.season ?? 1, episode: context.episode }
-        : undefined
-      : media.imdbId
-        ? { imdbId: media.imdbId, mediaType: media.mediaType, season: context.season, episode: context.episode }
-        : undefined;
-    setActivePlayer({ title: `${media.title}${episodeTag}`, sources: playable, subtitleQuery });
-  };
+  const handlePlaySource = useCallback(
+    (sources: StreamSource[], media: MediaItem, context: PlaybackContext) => {
+      const playable = toPlayable(sources);
+      if (!playable.length) return;
+      const nextProfile = recordMediaInteraction(media, 3);
+      setTaste(nextProfile);
+      selectMedia(null);
+      const episodeTag = context.season ? ` · S${context.season}E${context.episode}` : '';
+      const subtitleQuery: SubtitleQuery | undefined = media.anime
+        ? media.anime.imdbId
+          ? { imdbId: media.anime.imdbId, mediaType: media.mediaType, season: media.anime.season ?? 1, episode: context.episode }
+          : undefined
+        : media.imdbId
+          ? { imdbId: media.imdbId, mediaType: media.mediaType, season: context.season, episode: context.episode }
+          : undefined;
+      setActivePlayer({
+        key: `${media.id}-${context.season ?? 0}-${context.episode ?? 0}`,
+        title: `${media.title}${episodeTag}`,
+        sources: playable,
+        initialStartTime: context.startAt || 0,
+        subtitleQuery,
+        media,
+        season: context.season,
+        episode: context.episode,
+      });
+    },
+    [selectMedia]
+  );
 
   // Titles with bundled open streams play straight away; everything else opens its details.
   const handlePlayMedia = (media: MediaItem) => {
     const sources = OPEN_SOURCE_STREAMS[String(media.id)] || OPEN_SOURCE_STREAMS[String(media.tmdbId)] || [];
-    if (sources.length > 0) handlePlaySource(rankSources(sources), media, {});
-    else selectMedia(media);
+    const saved = getMediaProgress(media.id);
+    if (sources.length > 0) {
+      handlePlaySource(rankSources(sources), media, { startAt: saved?.position || 0 });
+    } else {
+      selectMedia(media);
+    }
   };
 
   const handlePlayLiveChannel = (channel: LiveChannel, channelList?: LiveChannel[]) => {
     const list = channelList && channelList.length > 0 ? channelList : [channel];
     const idx = Math.max(0, list.findIndex((c) => c.id === channel.id || c.streamUrl === channel.streamUrl));
     setActivePlayer({
+      key: `live-${channel.id}`,
       title: channel.name,
       sources: list.map((c) => ({ url: c.streamUrl, label: c.name })),
       initialSourceIndex: idx,
       isLive: channel.isLive,
     });
   };
+
+  const handleWatchProgress = useCallback(
+    (position: number, duration: number) => {
+      if (!activePlayer?.media) return;
+      const updated = saveWatchProgress(
+        activePlayer.media,
+        position,
+        duration,
+        activePlayer.season,
+        activePlayer.episode
+      );
+      setWatchProgress(updated);
+    },
+    [activePlayer]
+  );
+
+  const nextEpisodeAction = useMemo(() => {
+    if (!activePlayer?.media || activePlayer.media.mediaType !== 'tv') return undefined;
+    const curSeason = activePlayer.season ?? 1;
+    const curEpisode = activePlayer.episode ?? 1;
+    const next = findNextEpisode(activePlayer.media, curSeason, curEpisode);
+    if (!next) return undefined;
+    const media = activePlayer.media;
+    return {
+      label: next.label,
+      onPlayNext: () => {
+        const req = buildMediaRequest(media, next.season, next.episode);
+        fetch(req.url, { headers: req.headers })
+          .then((r) => r.json())
+          .then((data) => {
+            const ranked = rankSources(Array.isArray(data.streams) ? data.streams : []).filter(
+              (s) => s.magnet || s.url
+            );
+            if (ranked.length > 0) {
+              handlePlaySource(ranked.slice(0, 8), media, {
+                season: next.season,
+                episode: next.episode,
+                startAt: 0,
+              });
+            }
+          })
+          .catch(() => {});
+      },
+    };
+  }, [activePlayer, handlePlaySource]);
+
+  const continueWatchingItems = useMemo(() => watchProgress.map((w) => w.media), [watchProgress]);
+  const progressByMediaId = useMemo(() => {
+    const map: Record<string, { ratio: number; label: string }> = {};
+    for (const entry of watchProgress) {
+      const ratio = entry.duration > 0 ? Math.min(1, entry.position / entry.duration) : 0.15;
+      const minsLeft = entry.duration > entry.position ? Math.max(1, Math.round((entry.duration - entry.position) / 60)) : 0;
+      const epTag =
+        entry.media.mediaType === 'tv' && entry.episode
+          ? entry.media.anime
+            ? `Ep ${entry.episode}`
+            : `S${entry.season ?? 1} · E${entry.episode}`
+          : '';
+      const timeTag = minsLeft > 0 ? `${minsLeft}m left` : `${Math.floor(entry.position / 60)}m watched`;
+      map[String(entry.media.id)] = {
+        ratio,
+        label: [epTag, timeTag].filter(Boolean).join(' · '),
+      };
+    }
+    return map;
+  }, [watchProgress]);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -299,6 +442,18 @@ export default function Home() {
                 Shuffle picks
               </button>
             </div>
+
+            {continueWatchingItems.length > 0 && (
+              <MediaCarousel
+                title="Continue Watching"
+                subtitle="Pick up right where you left off"
+                items={continueWatchingItems}
+                onSelectMedia={selectMedia}
+                onPlayMedia={handlePlayMedia}
+                onRemoveItem={(m) => setWatchProgress(removeWatchProgress(m.id))}
+                progressByMediaId={progressByMediaId}
+              />
+            )}
 
             {home
               ? home.rows.map((row) => (
@@ -368,11 +523,15 @@ export default function Home() {
 
       {activePlayer && (
         <VideoPlayerModal
+          key={activePlayer.key}
           title={activePlayer.title}
           sources={activePlayer.sources}
           initialSourceIndex={activePlayer.initialSourceIndex}
+          initialStartTime={activePlayer.initialStartTime}
           isLive={activePlayer.isLive}
           subtitleQuery={activePlayer.subtitleQuery}
+          onWatchProgress={handleWatchProgress}
+          nextEpisode={nextEpisodeAction}
           onClose={() => setActivePlayer(null)}
         />
       )}

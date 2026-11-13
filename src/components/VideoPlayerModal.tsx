@@ -27,8 +27,14 @@ interface VideoPlayerModalProps {
   title: string;
   sources: PlayableSource[];
   initialSourceIndex?: number;
+  initialStartTime?: number;
   isLive?: boolean;
   subtitleQuery?: SubtitleQuery;
+  onWatchProgress?: (position: number, duration: number) => void;
+  nextEpisode?: {
+    label: string;
+    onPlayNext: () => void;
+  };
   onClose: () => void;
 }
 
@@ -119,8 +125,11 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
   title,
   sources,
   initialSourceIndex = 0,
+  initialStartTime = 0,
   isLive = false,
   subtitleQuery,
+  onWatchProgress,
+  nextEpisode,
   onClose,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -152,7 +161,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
   const [buffering, setBuffering] = useState(true);
   const [bufferTarget, setBufferTarget] = useState(START_BUFFER_SECONDS);
   const [ahead, setAhead] = useState(0);
-  const [currentTime, setCurrentTime] = useState(0);
+  const [currentTime, setCurrentTime] = useState(initialStartTime);
   const [mediaDuration, setMediaDuration] = useState(0);
   const [bufferedEnd, setBufferedEnd] = useState(0);
   const [volume, setVolume] = useState(1);
@@ -179,7 +188,8 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
   const prepareRef = useRef<PrepareStatus | null>(null);
   const sourceStartedAt = useRef(0);
   const bufferingSince = useRef(0);
-  const resumeAt = useRef(0);
+  const resumeAt = useRef(initialStartTime);
+  const lastProgressReportAt = useRef(0);
   const lastTouchTap = useRef<{ time: number; x: number }>({ time: 0, x: 0 });
 
   // The film timeline: in transcode mode the <video> starts at 0 at `offset`.
@@ -843,8 +853,13 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
         }}
         onTimeUpdate={(e) => {
           const v = e.currentTarget;
-          setCurrentTime(base + v.currentTime);
+          const now = base + v.currentTime;
+          setCurrentTime(now);
           if (v.buffered.length) setBufferedEnd(base + v.buffered.end(v.buffered.length - 1));
+          if (!isLive && onWatchProgress && now > 5 && Date.now() - lastProgressReportAt.current >= 4000) {
+            lastProgressReportAt.current = Date.now();
+            onWatchProgress(now, duration);
+          }
         }}
         onProgress={(e) => {
           const v = e.currentTarget;
@@ -861,10 +876,25 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
           revealControls();
         }}
         onPause={() => {
-          if (autoPausing.current) autoPausing.current = false;
-          else setIsPlaying(false);
+          if (autoPausing.current) {
+            autoPausing.current = false;
+          } else {
+            setIsPlaying(false);
+            if (!isLive && onWatchProgress) {
+              const now = filmTime();
+              if (now > 5) onWatchProgress(now, duration);
+            }
+          }
         }}
-        onEnded={() => setIsPlaying(false)}
+        onEnded={() => {
+          setIsPlaying(false);
+          if (!isLive && onWatchProgress && duration > 0) {
+            onWatchProgress(duration, duration);
+          }
+          if (nextEpisode) {
+            nextEpisode.onPlayNext();
+          }
+        }}
         onError={onVideoError}
       >
         {activeSub && (
@@ -951,6 +981,25 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
         <h1 className="text-base sm:text-lg font-semibold text-white truncate">{displayTitle}</h1>
       </div>
 
+      {/* Up Next overlay in final 35s of an episode */}
+      {nextEpisode && !isLive && duration > 60 && duration - currentTime <= 35 && duration - currentTime > 0 && !error && (
+        <div className="absolute bottom-24 right-6 z-20 flex items-center gap-3 px-4 py-3 rounded-2xl bg-zinc-900/95 border border-white/15 shadow-2xl backdrop-blur-md">
+          <div className="text-left">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-rose-400">
+              Up next in {Math.max(1, Math.ceil(duration - currentTime))}s
+            </p>
+            <p className="text-sm font-semibold text-white">{nextEpisode.label}</p>
+          </div>
+          <button
+            onClick={nextEpisode.onPlayNext}
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-white hover:bg-zinc-200 text-black text-xs font-semibold shadow-lg transition-all"
+          >
+            <Play className="w-3.5 h-3.5 fill-current" />
+            Play now
+          </button>
+        </div>
+      )}
+
       {/* Bottom controls */}
       <div
         className={`absolute bottom-0 inset-x-0 p-4 sm:p-6 space-y-3 bg-gradient-to-t from-black/90 to-transparent transition-opacity duration-300 ${
@@ -1028,6 +1077,16 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
               >
                 <RotateCw className="w-5 h-5" />
               </button>
+              {nextEpisode && (
+                <button
+                  onClick={nextEpisode.onPlayNext}
+                  title={`Next episode: ${nextEpisode.label}`}
+                  aria-label="Next episode"
+                  className="p-2 text-zinc-300 hover:text-white"
+                >
+                  <SkipForward className="w-5 h-5" />
+                </button>
+              )}
             </>
           )}
 

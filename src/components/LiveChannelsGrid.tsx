@@ -1,25 +1,26 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { Play, Search, MapPin, Clock, X } from 'lucide-react';
+import { Play, Search, MapPin, Clock, X, Star } from 'lucide-react';
 import { LiveChannel } from '@/types';
 import { PageHeader } from '@/components/PageHeader';
+import { getFavoriteChannelIds, toggleFavoriteChannel } from '@/lib/watchProgress';
 
 interface LiveChannelsGridProps {
   onPlayChannel: (channel: LiveChannel, channelList?: LiveChannel[]) => void;
 }
 
-const COUNTRY_KEY = 'screentime_live_country';
+const COUNTRY_KEY = 'lumen_live_country';
 const PAGE = 60;
 const ALL = 'all';
 const INTL = 'INTL';
-const CATEGORIES = ['All', 'News', 'Sports', 'Documentary', 'Music & Culture', 'Entertainment', 'General'] as const;
+const CATEGORIES = ['All', 'Favorites', 'News', 'Sports', 'Documentary', 'Music & Culture', 'Entertainment', 'General'] as const;
 /** Filter key: the ISO country, or "International" for themed channels without one. */
 const regionKey = (c: LiveChannel) => c.countryCode || INTL;
 
 function readCountry(): string | null {
   try {
-    return localStorage.getItem(COUNTRY_KEY);
+    return localStorage.getItem(COUNTRY_KEY) || localStorage.getItem('screentime_live_country');
   } catch {
     return null;
   }
@@ -39,6 +40,7 @@ export const LiveChannelsGrid: React.FC<LiveChannelsGridProps> = ({ onPlayChanne
   const [category, setCategory] = useState<string>('All');
   const [query, setQuery] = useState('');
   const [limit, setLimit] = useState(PAGE);
+  const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
   // Which streams are reachable right now (checked on the server, in batches as they scroll into the list).
   const [status, setStatus] = useState<Record<string, 'ok' | 'offline'>>({});
   const [showOffline, setShowOffline] = useState(false);
@@ -51,6 +53,7 @@ export const LiveChannelsGrid: React.FC<LiveChannelsGridProps> = ({ onPlayChanne
         if (cancelled) return;
         const list: LiveChannel[] = data.channels || [];
         setChannels(list);
+        setFavoriteIds(getFavoriteChannelIds());
         // Remembered choice, else the browser's country if it has channels, else everything.
         const saved = readCountry();
         const guess = browserCountry();
@@ -74,20 +77,33 @@ export const LiveChannelsGrid: React.FC<LiveChannelsGridProps> = ({ onPlayChanne
     return [...counts.entries()].sort((a, b) => a[1].name.localeCompare(b[1].name));
   }, [channels]);
 
+  const favSet = useMemo(() => new Set(favoriteIds), [favoriteIds]);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return (channels || [])
-      .filter((c) => country === ALL || regionKey(c) === country || (country !== INTL && c.source === 'curated'))
-      .filter((c) => category === 'All' || c.category === category)
+      .filter((c) =>
+        category === 'Favorites'
+          ? favSet.has(c.id)
+          : country === ALL || regionKey(c) === country || (country !== INTL && c.source === 'curated')
+      )
+      .filter((c) => category === 'All' || category === 'Favorites' || c.category === category)
       .filter((c) => !q || c.name.toLowerCase().includes(q) || c.country.toLowerCase().includes(q))
-      .sort((a, b) => Number(Boolean(a.geoBlocked)) - Number(Boolean(b.geoBlocked)));
-  }, [channels, country, category, query]);
+      .sort((a, b) => {
+        const favDiff = Number(favSet.has(b.id)) - Number(favSet.has(a.id));
+        if (favDiff !== 0) return favDiff;
+        return Number(Boolean(a.geoBlocked)) - Number(Boolean(b.geoBlocked));
+      });
+  }, [channels, country, category, query, favSet]);
 
   const offlineCount = filtered.filter((c) => status[c.streamUrl] === 'offline').length;
   const shown = useMemo(() => {
-    const rank = (c: LiveChannel) => (status[c.streamUrl] === 'ok' ? 0 : status[c.streamUrl] === 'offline' ? 2 : 1);
+    const rank = (c: LiveChannel) => {
+      const favBonus = favSet.has(c.id) ? -10 : 0;
+      return favBonus + (status[c.streamUrl] === 'ok' ? 0 : status[c.streamUrl] === 'offline' ? 2 : 1);
+    };
     return filtered.filter((c) => showOffline || status[c.streamUrl] !== 'offline').sort((a, b) => rank(a) - rank(b));
-  }, [filtered, status, showOffline]);
+  }, [filtered, status, showOffline, favSet]);
 
   // Check the channels on screen that haven't been checked yet.
   const pending = useMemo(
@@ -222,6 +238,8 @@ export const LiveChannelsGrid: React.FC<LiveChannelsGridProps> = ({ onPlayChanne
                   key={channel.id}
                   channel={channel}
                   status={status[channel.streamUrl]}
+                  isFavorite={favSet.has(channel.id)}
+                  onToggleFavorite={(id) => setFavoriteIds(toggleFavoriteChannel(id))}
                   onPlay={(c) => onPlayChannel(c, shown)}
                 />
               ))}
@@ -248,15 +266,29 @@ export const LiveChannelsGrid: React.FC<LiveChannelsGridProps> = ({ onPlayChanne
   );
 };
 
-const LogoCard: React.FC<{ channel: LiveChannel; status?: 'ok' | 'offline'; onPlay: (c: LiveChannel) => void }> = ({
-  channel,
-  status,
-  onPlay,
-}) => {
+const LogoCard: React.FC<{
+  channel: LiveChannel;
+  status?: 'ok' | 'offline';
+  isFavorite: boolean;
+  onToggleFavorite: (id: string) => void;
+  onPlay: (c: LiveChannel) => void;
+}> = ({ channel, status, isFavorite, onToggleFavorite, onPlay }) => {
   // Hand-picked channels carry artwork rather than a logo, so they're shown by name.
   const [broken, setBroken] = useState(!channel.logo || channel.source === 'curated');
   return (
-    <button onClick={() => onPlay(channel)} className={`group text-left ${status === 'offline' ? 'opacity-40' : ''}`} title={channel.name}>
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => onPlay(channel)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onPlay(channel);
+        }
+      }}
+      className={`group cursor-pointer text-left rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 ${status === 'offline' ? 'opacity-40' : ''}`}
+      title={channel.name}
+    >
       <div className="relative aspect-[4/3] rounded-xl overflow-hidden bg-gradient-to-br from-zinc-800/80 to-zinc-900 ring-1 ring-inset ring-white/[0.07] group-hover:ring-white/25 transition-all duration-300 group-hover:-translate-y-0.5 flex items-center justify-center p-5">
         {broken ? (
           <span className="font-display text-lg font-semibold text-zinc-400 text-center line-clamp-2">{channel.name}</span>
@@ -274,6 +306,23 @@ const LogoCard: React.FC<{ channel: LiveChannel; status?: 'ok' | 'offline'; onPl
             <Play className="w-4 h-4 fill-current ml-0.5" />
           </span>
         </span>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleFavorite(channel.id);
+          }}
+          aria-label={isFavorite ? `Unfavorite ${channel.name}` : `Favorite ${channel.name}`}
+          aria-pressed={isFavorite}
+          title={isFavorite ? 'Remove from favorites' : 'Pin to favorites'}
+          className={`absolute top-2 right-2 w-7 h-7 rounded-full flex items-center justify-center transition-all ${
+            isFavorite
+              ? 'bg-black/70 text-amber-400 opacity-100'
+              : 'bg-black/60 text-zinc-400 hover:text-white opacity-0 group-hover:opacity-100'
+          }`}
+        >
+          <Star className={`w-3.5 h-3.5 ${isFavorite ? 'fill-amber-400' : ''}`} />
+        </button>
       </div>
       <p className="mt-2 text-sm font-medium text-zinc-100 truncate">{channel.name}</p>
       <p className="text-xs text-zinc-500 truncate flex items-center gap-1.5">
@@ -296,6 +345,6 @@ const LogoCard: React.FC<{ channel: LiveChannel; status?: 'ok' | 'offline'; onPl
           </span>
         )}
       </p>
-    </button>
+    </div>
   );
 };

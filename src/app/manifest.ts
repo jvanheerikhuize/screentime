@@ -2,8 +2,8 @@ import type { MetadataRoute } from 'next';
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: 'Screentime',
-    short_name: 'Screentime',
+    name: 'Lumen',
+    short_name: 'Lumen',
     description: 'Movies, series, anime, and live TV streamed on demand.',
     start_url: '/',
     display: 'standalone',

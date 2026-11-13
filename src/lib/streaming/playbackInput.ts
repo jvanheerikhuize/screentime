@@ -19,7 +19,8 @@ export async function resolvePlaybackInput(req: Request): Promise<string | null>
     const self = new URL(req.url);
     const fileIndex = searchParams.get('fileIndex');
     const qs = `magnet=${encodeURIComponent(magnet.trim())}${fileIndex ? `&fileIndex=${encodeURIComponent(fileIndex)}` : ''}`;
-    const localPort = process.env.SCREENTIME_INTERNAL_PORT || process.env.PORT || self.port || '3000';
+    const localPort =
+      process.env.LUMEN_INTERNAL_PORT || process.env.SCREENTIME_INTERNAL_PORT || process.env.PORT || self.port || '3000';
     // Loopback to this server's actual listening port; ffmpeg talks plain HTTP to it.
     return `http://127.0.0.1:${localPort}/api/stream?${qs}`;
   }

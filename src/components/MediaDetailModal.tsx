@@ -7,6 +7,7 @@ import { Modal } from './Modal';
 import { rankSources } from '@/lib/streaming/pickSource';
 import type { ShowStatus } from '@/lib/metadata/tvmaze';
 import { cleanAddonUrls, isDefaultAddonList } from '@/lib/scrapers/addonUrls';
+import { getEpisodeProgress, getMediaProgress } from '@/lib/watchProgress';
 
 function formatAirDate(airstamp?: string): string {
   if (!airstamp) return '';
@@ -21,6 +22,7 @@ function formatAirDate(airstamp?: string): string {
 export interface PlaybackContext {
   season?: number;
   episode?: number;
+  startAt?: number;
 }
 
 interface MediaDetailModalProps {
@@ -33,14 +35,19 @@ interface MediaDetailModalProps {
 }
 
 /** Stream lookup request; indexer credentials travel as headers so they stay out of URLs and logs. */
-function buildMediaRequest(media: MediaItem, season: number, episode: number): { url: string; headers: Record<string, string> } {
+export function buildMediaRequest(
+  media: MediaItem,
+  season: number,
+  episode: number
+): { url: string; headers: Record<string, string> } {
   let url = `/api/media/${encodeURIComponent(String(media.id))}?type=${media.mediaType}`;
   if (media.imdbId) url += `&imdbId=${media.imdbId}`;
   if (media.mediaType === 'tv') url += `&season=${season}&episode=${episode}`;
   const headers: Record<string, string> = {};
 
   try {
-    const parsed = JSON.parse(localStorage.getItem('screentime_settings') || '{}');
+    const raw = localStorage.getItem('lumen_settings') || localStorage.getItem('screentime_settings') || '{}';
+    const parsed = JSON.parse(raw);
     if (parsed.prowlarrEnabled && parsed.prowlarrUrl && parsed.prowlarrApiKey) {
       headers['X-Prowlarr-Url'] = parsed.prowlarrUrl;
       headers['X-Prowlarr-Key'] = parsed.prowlarrApiKey;
@@ -74,11 +81,12 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
   isLiked = false,
   onToggleLike,
 }) => {
+  const savedMediaProgress = useMemo(() => getMediaProgress(baseMedia.id), [baseMedia.id]);
   const [details, setDetails] = useState<Partial<MediaItem> | null>(null);
   const [sources, setSources] = useState<StreamSource[]>([]);
   const [loading, setLoading] = useState(true);
-  const [season, setSeason] = useState(1);
-  const [episode, setEpisode] = useState(1);
+  const [season, setSeason] = useState(() => savedMediaProgress?.season ?? 1);
+  const [episode, setEpisode] = useState(() => savedMediaProgress?.episode ?? 1);
   const [showAllSources, setShowAllSources] = useState(false);
   const [showStatus, setShowStatus] = useState<ShowStatus | null>(null);
   const [episodeRange, setEpisodeRange] = useState<number | null>(null);
@@ -148,12 +156,32 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
     setEpisode(episodeNumber);
   };
 
-  const play = (source: StreamSource) =>
-    onPlaySource([source, ...ranked.filter((s) => s !== source)].slice(0, 8), media, isSeries ? { season, episode } : {});
+  const activeEpProgress = isSeries ? getEpisodeProgress(baseMedia.id, season, episode) : savedMediaProgress;
+  const resumeSeconds =
+    activeEpProgress &&
+    activeEpProgress.position > 10 &&
+    (!activeEpProgress.duration || activeEpProgress.position / activeEpProgress.duration < 0.94)
+      ? activeEpProgress.position
+      : 0;
+
+  const play = (source: StreamSource, startAt = resumeSeconds) =>
+    onPlaySource(
+      [source, ...ranked.filter((s) => s !== source)].slice(0, 8),
+      media,
+      isSeries ? { season, episode, startAt } : { startAt }
+    );
 
   const [failedBackdrop, setFailedBackdrop] = useState<string | null>(null);
   const year = (media.releaseDate || media.firstAirDate)?.split('-')[0];
-  const playLabel = isSeries ? (media.anime ? `Play episode ${episode}` : `Play S${season} · E${episode}`) : 'Play';
+  const basePlayLabel = isSeries ? (media.anime ? `Episode ${episode}` : `S${season} · E${episode}`) : '';
+  const playLabel =
+    resumeSeconds > 0
+      ? isSeries
+        ? `Resume ${basePlayLabel}`
+        : `Resume (${Math.floor(resumeSeconds / 60)}m)`
+      : isSeries
+        ? `Play ${basePlayLabel}`
+        : 'Play';
 
   return (
     <Modal onClose={onClose} label={media.title}>
@@ -212,13 +240,21 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
         <div className="space-y-2">
           <div className="flex items-center gap-3 flex-wrap">
             <button
-              onClick={() => best && play(best)}
+              onClick={() => best && play(best, resumeSeconds)}
               disabled={loading || !best}
               className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-2.5 px-8 py-3.5 rounded-full bg-white hover:bg-zinc-200 disabled:bg-zinc-800 disabled:text-zinc-400 text-black text-base font-semibold shadow-xl shadow-black/40 active:scale-[0.98] transition-all"
             >
               {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Play className="w-5 h-5 fill-current" />}
               {loading ? 'Finding streams…' : best ? playLabel : 'No streams found'}
             </button>
+            {resumeSeconds > 0 && !loading && best && (
+              <button
+                onClick={() => play(best, 0)}
+                className="inline-flex items-center justify-center gap-2 px-5 py-3.5 rounded-full text-sm font-semibold bg-white/[0.06] border border-white/10 text-zinc-200 hover:bg-white/15 hover:text-white transition-all active:scale-[0.98]"
+              >
+                Start over
+              </button>
+            )}
             {onToggleLike && (
               <button
                 onClick={() => onToggleLike(media)}
@@ -308,17 +344,33 @@ export const MediaDetailModal: React.FC<MediaDetailModalProps> = ({
             <div className="divide-y divide-white/[0.06] ring-1 ring-inset ring-white/[0.08] rounded-2xl overflow-hidden bg-white/[0.02]">
               {visibleEpisodes.map((ep) => {
                 const active = ep.episodeNumber === episode;
+                const epProg = getEpisodeProgress(baseMedia.id, season, ep.episodeNumber);
+                const epRatio = epProg && epProg.duration > 0 ? Math.min(1, epProg.position / epProg.duration) : 0;
+                const watched = epRatio >= 0.9;
                 return (
                   <button
                     key={ep.id}
                     onClick={() => selectEpisode(season, ep.episodeNumber)}
-                    className={`w-full text-left px-4 py-3 flex items-center gap-3 transition-colors ${
+                    className={`relative w-full text-left px-4 py-3 flex items-center gap-3 transition-colors ${
                       active ? 'bg-rose-600/15' : 'hover:bg-zinc-800/70'
                     }`}
                   >
                     <span className={`min-w-7 text-sm font-mono ${active ? 'text-rose-400' : 'text-zinc-500'}`}>{ep.episodeNumber}</span>
                     <span className={`flex-1 truncate text-sm ${active ? 'text-white font-semibold' : 'text-zinc-300'}`}>{ep.name}</span>
+                    {watched && (
+                      <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300">
+                        Watched
+                      </span>
+                    )}
                     {active && <Play className="w-4 h-4 text-rose-400 fill-rose-400" />}
+                    {epRatio > 0.02 && epRatio < 0.9 && (
+                      <span className="absolute inset-x-0 bottom-0 h-0.5 bg-white/10">
+                        <span
+                          className="block h-full bg-rose-500"
+                          style={{ width: `${Math.round(epRatio * 100)}%` }}
+                        />
+                      </span>
+                    )}
                   </button>
                 );
               })}
