@@ -1,0 +1,49 @@
+name: lumen
+services:
+  lumen:
+    image: ghcr.io/jvanheerikhuize/lumen:latest
+    container_name: lumen
+    restart: unless-stopped
+    ports:
+      - target: 3000
+        published: "3000"
+        protocol: tcp
+    environment:
+      NODE_ENV: production
+      LUMEN_DATA_DIR: /app/data
+      LUMEN_HWACCEL: none
+      LUMEN_ALLOW_PRIVATE_ADDONS: "0"
+    volumes:
+      - type: bind
+        source: /DATA/AppData/lumen/data
+        target: /app/data
+    x-casaos:
+      architectures:
+        - amd64
+        - arm64
+      main: lumen
+      author: jvanheerikhuize
+      category: Media
+      description:
+        en_us: Zero-config self-hosted streaming dashboard for movies, series, anime, live TV, and torrents with on-the-fly ffmpeg conversion.
+      tagline:
+        en_us: Self-hosted streaming dashboard
+      title:
+        en_us: Lumen
+      port_map: "3000"
+      index: /
+x-casaos:
+  architectures:
+    - amd64
+    - arm64
+  main: lumen
+  author: jvanheerikhuize
+  category: Media
+  description:
+    en_us: Zero-config self-hosted streaming dashboard for movies, series, anime, live TV, and torrents with on-the-fly ffmpeg conversion.
+  tagline:
+    en_us: Self-hosted streaming dashboard
+  title:
+    en_us: Lumen
+  port_map: "3000"
+  index: /

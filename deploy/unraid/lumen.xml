@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>lumen</Name>
+  <Repository>ghcr.io/jvanheerikhuize/lumen:latest</Repository>
+  <Registry>https://ghcr.io/jvanheerikhuize/lumen</Registry>
+  <Network>bridge</Network>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/jvanheerikhuize/lumen/issues</Support>
+  <Project>https://github.com/jvanheerikhuize/lumen</Project>
+  <Overview>Zero-config self-hosted streaming dashboard for movies, TV series, anime, live TV, and torrents with on-the-fly ffmpeg conversion.</Overview>
+  <Category>MediaApp:Video</Category>
+  <WebUI>http://[IP]:[PORT:3000]/</WebUI>
+  <Config Name="WebUI Port" Target="3000" Default="3000" Mode="tcp" Description="Lumen HTTP Port" Type="Port" Display="always" Required="true" Mask="false">3000</Config>
+  <Config Name="App Data" Target="/app/data" Default="/mnt/user/appdata/lumen" Mode="rw" Description="Persistent LAN watch progress and favorites" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/lumen</Config>
+  <Config Name="TMDB API Key" Target="TMDB_API_KEY" Default="" Mode="" Description="Optional TMDB API key" Type="Variable" Display="always" Required="false" Mask="true"/>
+  <Config Name="Hardware Acceleration" Target="LUMEN_HWACCEL" Default="none" Mode="" Description="Optional: vaapi, nvenc, qsv, videotoolbox, or none" Type="Variable" Display="advanced" Required="false" Mask="false">none</Config>
+  <Config Name="Allow Private Addons" Target="LUMEN_ALLOW_PRIVATE_ADDONS" Default="0" Mode="" Description="Set to 1 to allow Stremio addons on your local network" Type="Variable" Display="advanced" Required="false" Mask="false">0</Config>
+</Container>
